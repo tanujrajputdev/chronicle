@@ -216,6 +216,7 @@ One SQLite file at `~/.chronicle/chronicle.db` — 11 MB for 500 MB of transcrip
 | `doctor` | Check *this* install: environment, index, hooks, MCP, redaction. 21 checks. |
 | `selftest` | Run the whole product against a synthetic corpus in a sandbox. 57 checks. |
 | `stats` | Corpus overview. |
+| `tokens [--by project\|day\|month]` | Every token spent, split into input, cache write, cache read and output. |
 | `projects` | Every project, most recently worked first. |
 | `project <name>` | One project in full: totals, every repo it spans, biggest work, agent runs. |
 | `timeline [project]` | Episodes, newest first. |

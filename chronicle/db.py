@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY, project_id TEXT, cwd TEXT, branch TEXT,
   title TEXT, started TEXT, ended TEXT,
   n_user INTEGER, n_asst INTEGER, compactions INTEGER,
-  out_tokens INTEGER, cache_read INTEGER
+  out_tokens INTEGER, cache_read INTEGER, in_tokens INTEGER, cache_write INTEGER
 );
 
 -- ids are handed out once per (session, sequence) and never reassigned, so a
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS episodes (
   session_id TEXT, project_id TEXT, seq INTEGER,
   started TEXT, ended TEXT, duration_s INTEGER,
   n_prompts INTEGER, n_tools INTEGER, compactions INTEGER, n_agents INTEGER,
-  out_tokens INTEGER, cache_read INTEGER,
+  out_tokens INTEGER, cache_read INTEGER, in_tokens INTEGER, cache_write INTEGER,
   title TEXT, opening_prompt TEXT, branch TEXT,
   files_touched TEXT, tools TEXT
 );
@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   episode_id INTEGER, session_id TEXT, project_id TEXT,
   path TEXT UNIQUE, agent_type TEXT, workflow_id TEXT,
   ts TEXT, ended TEXT, prompt TEXT, result TEXT,
-  n_tools INTEGER, out_tokens INTEGER
+  n_tools INTEGER, out_tokens INTEGER, in_tokens INTEGER,
+  cache_read INTEGER, cache_write INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_ar_ep ON agent_runs(episode_id);
 

@@ -21,3 +21,4 @@ __pycache__/
 *.db-shm
 .DS_Store
 Chronicle-Playbook.pdf
+.build/

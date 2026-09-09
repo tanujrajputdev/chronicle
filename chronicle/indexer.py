@@ -69,12 +69,12 @@ def build(con, rebuild=False, verbose=True, progress=None):
 
         con.execute("DELETE FROM messages WHERE session_id=?", (sid,))
         con.execute("DELETE FROM episodes WHERE session_id=?", (sid,))
-        con.execute("INSERT OR REPLACE INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (
+        con.execute("INSERT OR REPLACE INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
             sid, pid, ppath, s["branch"], s["title"],
             _iso(s["events"][0][0]) if s["events"] else None,
             _iso(s["events"][-1][0]) if s["events"] else None,
             s["n_user"], s["n_asst"], s["compactions"],
-            s["out_tokens"], s["cache_read"]))
+            s["out_tokens"], s["cache_read"], s["in_tokens"], s["cache_write"]))
         stats["sessions"] += 1
 
         eps = ingest.segment(s["events"])
@@ -92,14 +92,16 @@ def build(con, rebuild=False, verbose=True, progress=None):
             con.execute(
                 "INSERT OR REPLACE INTO episodes (id,session_id,project_id,seq,started,ended,"
                 "duration_s,n_prompts,n_tools,compactions,n_agents,out_tokens,cache_read,title,"
-                "opening_prompt,branch,files_touched,tools) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "opening_prompt,branch,files_touched,tools,in_tokens,cache_write) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (eid, sid, pid, ep["seq"], _iso(ep["started"]), _iso(ep["ended"]),
                  int((ep["ended"] - ep["started"]).total_seconds()),
                  sum(1 for _, t in ep["prompts"] if not ingest.is_machinery(t)),
                  sum(ep["tools"].values()), ep["compactions"],
                  ep["agents"], ep["out_tokens"], ep["cache_read"], title, opening,
                  s["branch"], json.dumps(sorted(ep["files"])[:200]),
-                 json.dumps(dict(ep["tools"].most_common(30)))))
+                 json.dumps(dict(ep["tools"].most_common(30))),
+                 ep["in_tokens"], ep["cache_write"]))
             spans.append((eid, ep["started"], ep["ended"]))
 
             roots = collections.Counter()
@@ -162,10 +164,11 @@ def build(con, rebuild=False, verbose=True, progress=None):
         aid = stable_agent_id(con, path)
         con.execute(
             "INSERT OR REPLACE INTO agent_runs (id,episode_id,session_id,project_id,path,"
-            "agent_type,workflow_id,ts,ended,prompt,result,n_tools,out_tokens) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "agent_type,workflow_id,ts,ended,prompt,result,n_tools,out_tokens,in_tokens,"
+            "cache_read,cache_write) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (aid, eid, sid, pid, path, atype, wf, _iso(a["started"]), _iso(a["ended"]),
-             prompt, result, a["n_tools"], a["out_tokens"]))
+             prompt, result, a["n_tools"], a["out_tokens"], a["in_tokens"],
+             a["cache_read"], a["cache_write"]))
         con.execute("DELETE FROM agents_fts WHERE rowid=?", (aid,))
         con.execute("INSERT INTO agents_fts (rowid,prompt,result) VALUES (?,?,?)",
                     (aid, prompt, result))

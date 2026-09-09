@@ -189,7 +189,7 @@ def parse_session(path):
     title = None
     cwd = branch = None
     n_user = n_asst = compactions = 0
-    out_tok = cache_rd = 0
+    out_tok = cache_rd = in_tok = cache_wr = 0
 
     with open(path, "r", errors="ignore") as fh:
         for line in fh:
@@ -226,13 +226,17 @@ def parse_session(path):
                 u = msg.get("usage") or {}
                 ot = u.get("output_tokens", 0) or 0
                 cr = u.get("cache_read_input_tokens", 0) or 0
+                it = u.get("input_tokens", 0) or 0
+                cw = u.get("cache_creation_input_tokens", 0) or 0
                 out_tok += ot
                 cache_rd += cr
+                in_tok += it
+                cache_wr += cw
                 text, _ = _text_of(msg.get("content"))
                 if text:
                     events.append((d, "asst", text[:MAX_ASST_TEXT]))
-                if ot or cr:
-                    events.append((d, "usage", (ot, cr)))
+                if ot or cr or it or cw:
+                    events.append((d, "usage", (ot, cr, it, cw)))
                 c = msg.get("content")
                 if isinstance(c, list):
                     for b in c:
@@ -248,6 +252,7 @@ def parse_session(path):
         "events": events, "title": title, "cwd": cwd, "branch": branch,
         "n_user": n_user, "n_asst": n_asst, "compactions": compactions,
         "out_tokens": out_tok, "cache_read": cache_rd,
+        "in_tokens": in_tok, "cache_write": cache_wr,
     }
 
 
@@ -257,7 +262,7 @@ def parse_agent(path):
     last_text = ""
     first = last = None
     n_tools = 0
-    out_tok = 0
+    out_tok = in_tok = cache_rd = cache_wr = 0
     with open(path, "r", errors="ignore") as fh:
         for line in fh:
             try:
@@ -276,6 +281,9 @@ def parse_agent(path):
             elif o.get("type") == "assistant":
                 u = msg.get("usage") or {}
                 out_tok += u.get("output_tokens", 0) or 0
+                in_tok += u.get("input_tokens", 0) or 0
+                cache_rd += u.get("cache_read_input_tokens", 0) or 0
+                cache_wr += u.get("cache_creation_input_tokens", 0) or 0
                 t, _ = _text_of(msg.get("content"))
                 if t:
                     last_text = t
@@ -283,7 +291,8 @@ def parse_agent(path):
                 if isinstance(c, list):
                     n_tools += sum(1 for b in c if isinstance(b, dict) and b.get("type") == "tool_use")
     return {"prompt": prompt or "", "result": last_text[:MAX_ASST_TEXT],
-            "started": first, "ended": last, "n_tools": n_tools, "out_tokens": out_tok}
+            "started": first, "ended": last, "n_tools": n_tools, "out_tokens": out_tok,
+            "in_tokens": in_tok, "cache_read": cache_rd, "cache_write": cache_wr}
 
 
 # ---------------------------------------------------------------- segmenting
@@ -306,7 +315,8 @@ def segment(events, gap=GAP_SECONDS):
         nxt = bounds[i + 1][0] if i + 1 < len(bounds) else None
         ep = {"seq": i + 1, "started": a, "ended": b, "prompts": [], "asst": [],
               "tools": collections.Counter(), "files": set(), "agents": 0,
-              "compactions": 0, "out_tokens": 0, "cache_read": 0}
+              "compactions": 0, "out_tokens": 0, "cache_read": 0,
+              "in_tokens": 0, "cache_write": 0}
         for d, kind, payload in events:
             if d < a or (nxt is not None and d >= nxt):
                 continue
@@ -319,6 +329,8 @@ def segment(events, gap=GAP_SECONDS):
             elif kind == "usage":
                 ep["out_tokens"] += payload[0]
                 ep["cache_read"] += payload[1]
+                ep["in_tokens"] += payload[2]
+                ep["cache_write"] += payload[3]
             elif kind == "tool":
                 nm, fp, sub = payload
                 ep["tools"][nm] += 1

@@ -65,8 +65,57 @@ def cmd_stats(con, a):
           f"{days['n']} active days · {_day(r['a'])} → {_day(r['b'])}")
     print(f"  {r['p']} prompts · {_dur(r['d'])} elapsed · {r['k']} compactions survived")
     print(f"  {ag['n']} agent runs ({_n(ag['o'])} output tokens)")
-    print(f"  {_n(r['o'])} output tokens · {_n(r['c'])} cache reads")
+    tk = con.execute("SELECT SUM(in_tokens) i,SUM(cache_write) w,SUM(cache_read) r,"
+                     "SUM(out_tokens) o FROM episodes").fetchone()
+    total = sum(tk[k] or 0 for k in ("i", "w", "r", "o"))
+    print(f"  {_n(total)} tokens total — {_n(tk['i'])} in · {_n(tk['w'])} cache write · "
+          f"{_n(tk['r'])} cache read · {_n(tk['o'])} out")
     print(f"  {D}last indexed {last['v'] if last else 'never'} · gap threshold {GAP_SECONDS//3600}h{R}")
+
+
+def cmd_tokens(con, a):
+    """Every token this machine has spent, and where it went."""
+    group = {"project": "p.project_id", "day": "substr(e.started,1,10)",
+             "week": "substr(e.started,1,10)", "month": "substr(e.started,1,7)"}[a.by]
+    where, args = "", []
+    if a.project:
+        where = "WHERE p.project_id LIKE ?"
+        args.append(f"%{a.project}%")
+    rows = con.execute(f"""
+      SELECT {group} k, SUM(e.in_tokens) i, SUM(e.cache_write) w,
+             SUM(e.cache_read) r, SUM(e.out_tokens) o, COUNT(DISTINCT e.id) n
+      FROM (SELECT DISTINCT episode_id, project_id FROM episode_projects) p
+      JOIN episodes e ON e.id = p.episode_id {where}
+      GROUP BY k ORDER BY (SUM(e.in_tokens)+SUM(e.cache_write)+SUM(e.cache_read)
+                          +SUM(e.out_tokens)) DESC""", args).fetchall()
+    if not rows:
+        print(f"  {D}nothing indexed yet — run: {CMD} index{R}"); return
+    tot = sum((r["i"] or 0) + (r["w"] or 0) + (r["r"] or 0) + (r["o"] or 0) for r in rows)
+    _rule(f"Token usage · by {a.by}")
+    label = "project" if a.by == "project" else a.by
+    print(f"  {D}{label:<16}{'input':>9}{'cache write':>13}{'cache read':>12}"
+          f"{'output':>10}{'total':>10}{'share':>7}{R}")
+    for r in rows:
+        t = (r["i"] or 0) + (r["w"] or 0) + (r["r"] or 0) + (r["o"] or 0)
+        name = r["k"]
+        if a.by == "project":
+            lbl = con.execute("SELECT name FROM projects WHERE id=?", (name,)).fetchone()
+            name = lbl["name"] if lbl else name
+        print(f"  {B}{str(name)[:15]:<16}{R}{_n(r['i']):>9}{_n(r['w']):>13}{_n(r['r']):>12}"
+              f"{_n(r['o']):>10}{_n(t):>10}{t*100//max(tot,1):>6}%")
+    print(f"  {D}{'─'*72}{R}")
+    ti = sum(r["i"] or 0 for r in rows); tw = sum(r["w"] or 0 for r in rows)
+    tr = sum(r["r"] or 0 for r in rows); to = sum(r["o"] or 0 for r in rows)
+    print(f"  {B}{'TOTAL':<16}{R}{_n(ti):>9}{_n(tw):>13}{_n(tr):>12}{_n(to):>10}{_n(tot):>10}")
+    ag = con.execute("SELECT SUM(in_tokens+cache_write+cache_read+out_tokens) t,"
+                     "COUNT(*) n FROM agent_runs").fetchone()
+    print()
+    pct = lambda v: f"{v*100/max(tot,1):.1f}%".rstrip("0").rstrip(".") + ("%" if False else "")
+    print(f"  {D}cache reads are {tr*100/max(tot,1):.0f}% of the total — context Claude Code had already")
+    print(f"  cached and re-read, billed far below the input rate. Fresh input is only "
+          f"{ti*100/max(tot,1):.2f}%.{R}")
+    if ag and ag["t"]:
+        print(f"  {D}{ag['n']} subagent runs account for {_n(ag['t'])} of it.{R}")
 
 
 def cmd_projects(con, a):
@@ -509,6 +558,10 @@ def main(argv=None):
     x.add_argument("--rebuild", action="store_true"); x.set_defaults(fn=cmd_index)
 
     x = sub.add_parser("stats", help="corpus overview"); x.set_defaults(fn=cmd_stats)
+    x = sub.add_parser("tokens", help="token usage by project, day or month")
+    x.add_argument("--by", choices=["project", "day", "month"], default="project")
+    x.add_argument("-p", "--project"); x.set_defaults(fn=cmd_tokens)
+
     x = sub.add_parser("projects", help="every project, most recent first"); x.set_defaults(fn=cmd_projects)
 
     x = sub.add_parser("timeline", help="episodes, newest first")
