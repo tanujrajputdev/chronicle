@@ -54,11 +54,10 @@ def _link_command():
     if existing:
         try:
             if pathlib.Path(existing).resolve() == target.resolve():
-                return existing          # already reachable; do not add a second link
+                return existing, True    # already reachable; do not add a second link
         except OSError:
             pass
     path_dirs = os.environ.get("PATH", "").split(":")
-    target = INSTALL_DIR / "chronicle-cli"
     for d in BIN_CANDIDATES:
         p = pathlib.Path(d)
         if not (p.is_dir() and os.access(d, os.W_OK) and d in path_dirs):
