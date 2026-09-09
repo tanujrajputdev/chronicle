@@ -210,6 +210,7 @@ One SQLite file at `~/.chronicle/chronicle.db` — 11 MB for 500 MB of transcrip
 | `map [--cross]` | Where work launched in one folder actually landed. |
 | `brief [project]` | What a new session here is told automatically. |
 | `recall [session]` | The last pre-compaction checkpoint, in full. |
+| `checkpoints` | Every checkpoint saved so far. |
 | `why "<text>"` | Would the repeat-work check fire? Which gate stopped it? |
 | `report [project] --since 7d` | A work log you can send someone. |
 | `digest` | Regenerate `projects/<name>/DIGEST.md` and `MEMORY.md`. |
@@ -285,6 +286,7 @@ Then `./chronicle-cli index --rebuild`. Run `chronicle map --cross` to find dire
 | `CHRONICLE_ROOT` | `~/.chronicle` | Where the index, checkpoints and logs live |
 | `CHRONICLE_SOURCE` | `~/.claude/projects` | Where to read sessions from |
 | `CHRONICLE_GAP` | `14400` | Idle seconds that end an episode |
+| `CHRONICLE_MEMORY` | the install dir | Where `aliases.json` and generated digests live |
 | `CHRONICLE_PYTHON` | auto | Force a specific interpreter |
 | `CHRONICLE_NO_BRIEF` | unset | Disable the session-start brief |
 | `CHRONICLE_NO_RECALL` | unset | Disable the repeat-work check |
