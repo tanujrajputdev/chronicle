@@ -1,8 +1,9 @@
 import sys, os, json, argparse, datetime, textwrap, shutil
 from . import db, indexer, ingest, digest as digestmod
-from .config import DB_PATH, SOURCE, ALIASES_PATH, GAP_SECONDS
+from .config import DB_PATH, SOURCE, ALIASES_PATH, GAP_SECONDS, invocation
 
 W = min(shutil.get_terminal_size((100, 24)).columns, 110)
+CMD = invocation()
 B, D, R, Y, C, G = "\033[1m", "\033[2m", "\033[0m", "\033[33m", "\033[36m", "\033[32m"
 
 
@@ -255,7 +256,7 @@ def cmd_project(con, a):
                          JOIN episode_projects p ON p.episode_id = e.id
                          WHERE p.project_id = ? ORDER BY e.started""", (pid,)).fetchall()
     if not eps:
-        print(f"  {D}no project matching {a.name!r}. try: ./chronicle-cli projects{R}")
+        print(f"  {D}no project matching {a.name!r}. try: {CMD} projects{R}")
         return
 
     ids = [e["id"] for e in eps]
@@ -323,7 +324,7 @@ def cmd_project(con, a):
             print(f"    {C}@{r['id']:<5}{R}{D}{_day(r['ts'])}{R} "
                   f"{(head[0][:W-30] if head else '')}")
 
-    print(f"\n  {D}full timeline: ./chronicle-cli timeline {pid}{R}")
+    print(f"\n  {D}full timeline: {CMD} timeline {pid}{R}")
 
 
 def cmd_map(con, a):
@@ -352,7 +353,7 @@ def cmd_map(con, a):
     if cross:
         print(f"\n  {Y}{cross} path{'s' if cross != 1 else ''} where the session folder and the work "
               f"belong to different projects.{R}")
-        print(f"  {D}Fix by adding the path to aliases.json, then: ./chronicle-cli index --rebuild{R}")
+        print(f"  {D}Fix by adding the path to aliases.json, then: {CMD} index --rebuild{R}")
 
 
 def cmd_why(con, a):
@@ -451,7 +452,7 @@ def cmd_doctor(con, a):
     print()
     if unindexed and not c[doctor.FAIL]:
         print(f"  {Y}nothing indexed yet{R} — the install looks fine, but there is no history "
-              f"to answer from.\n  Run: ./chronicle-cli index")
+              f"to answer from.\n  Run: {CMD} index")
     elif c[doctor.FAIL]:
         print(f"  \033[31m{c[doctor.FAIL]} failing{R}, {c[doctor.WARN]} warning, "
               f"{c[doctor.OK]} passing — fix the ✗ items above")

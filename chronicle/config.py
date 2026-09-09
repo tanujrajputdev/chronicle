@@ -47,3 +47,18 @@ def load_aliases():
         except Exception:
             pass
     return {}, {}
+
+
+def invocation():
+    """How to tell the user to run us: `chronicle` when it is on PATH and points
+    here, otherwise the absolute launcher. Printing `./chronicle-cli` is wrong
+    everywhere except the install directory."""
+    import shutil
+    found = shutil.which("chronicle")
+    launcher = INSTALL_DIR / "chronicle-cli"
+    try:
+        if found and os.path.realpath(found) == os.path.realpath(launcher):
+            return "chronicle"
+    except OSError:
+        pass
+    return str(launcher)

@@ -5,9 +5,10 @@ mutates anything; running doctor is always safe.
 """
 import os, sys, json, time, sqlite3, socket, subprocess, datetime, pathlib, re
 
-from .config import DB_PATH, SOURCE, ROOT, INSTALL_DIR, ALIASES_PATH
+from .config import DB_PATH, SOURCE, ROOT, INSTALL_DIR, ALIASES_PATH, invocation
 
 OK, WARN, FAIL = "ok", "warn", "fail"
+CMD = invocation()
 
 
 class Report:
@@ -83,7 +84,7 @@ def check_environment(r):
 def check_index(r):
     if not DB_PATH.exists():
         r.add("Index", FAIL, "database", "not created",
-              "Run: ./chronicle-cli index")
+              f"Run: {CMD} index")
         return None
     con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
@@ -97,7 +98,7 @@ def check_index(r):
             r.add("Index", OK, "contents",
                   f"{e['n']} episodes · {e['p']} prompts · {a} agent runs · {pj} projects")
         else:
-            r.add("Index", WARN, "contents", "empty", "Run: ./chronicle-cli index")
+            r.add("Index", WARN, "contents", "empty", f"Run: {CMD} index")
     except Exception as ex:
         r.add("Index", FAIL, "contents", str(ex), "The schema may be stale — run index --rebuild")
         return con
@@ -109,11 +110,11 @@ def check_index(r):
                    - datetime.datetime.fromisoformat(row["v"])).total_seconds()
             status = OK if age < 86400 else WARN
             r.add("Index", status, "freshness", f"last indexed {_ago(time.time() - age)}",
-                  "" if status == OK else "Run: ./chronicle-cli index")
+                  "" if status == OK else f"Run: {CMD} index")
         except Exception:
             r.add("Index", WARN, "freshness", row["v"])
     else:
-        r.add("Index", WARN, "freshness", "never", "Run: ./chronicle-cli index")
+        r.add("Index", WARN, "freshness", "never", f"Run: {CMD} index")
 
     try:
         ids = con.execute("SELECT COUNT(*) n FROM episode_ids").fetchone()["n"]
@@ -136,7 +137,7 @@ def check_index(r):
         ms = (time.time() - t0) * 1000
         r.add("Index", OK, "search", f"{n} hits in {ms:.0f}ms")
     except Exception as ex:
-        r.add("Index", FAIL, "search", str(ex), "Run: ./chronicle-cli index --rebuild")
+        r.add("Index", FAIL, "search", str(ex), f"Run: {CMD} index --rebuild")
 
     try:
         terms = con.execute("SELECT COUNT(*) n FROM terms").fetchone()["n"]
@@ -144,10 +145,10 @@ def check_index(r):
         status = OK if terms and eterms else WARN
         r.add("Index", status, "recall vocabulary",
               f"{terms} terms over {eterms} episodes",
-              "" if status == OK else "Run: ./chronicle-cli index --rebuild")
+              "" if status == OK else f"Run: {CMD} index --rebuild")
     except Exception:
         r.add("Index", WARN, "recall vocabulary", "not built",
-              "Run: ./chronicle-cli index --rebuild")
+              f"Run: {CMD} index --rebuild")
     return con
 
 
@@ -157,7 +158,7 @@ def check_capture(r):
         s = json.loads(settings.read_text())
     except Exception:
         r.add("Capture", WARN, "hooks", "no settings.json",
-              "Run: ./chronicle-cli install")
+              f"Run: {CMD} install")
         return
     ours, foreign = [], 0
     for ev, groups in (s.get("hooks") or {}).items():
@@ -172,7 +173,7 @@ def check_capture(r):
     r.add("Capture", OK if not missing else WARN, "hooks",
           f"{len(ours)} installed: {', '.join(sorted(set(ours))) or 'none'}"
           + (f" · {foreign} from other tools untouched" if foreign else ""),
-          "" if not missing else f"Missing {', '.join(sorted(missing))} — run: ./chronicle-cli install")
+          "" if not missing else f"Missing {', '.join(sorted(missing))} — run: {CMD} install")
 
     launcher = INSTALL_DIR / "chronicle-hook"
     if launcher.exists() and os.access(launcher, os.X_OK):
@@ -180,7 +181,7 @@ def check_capture(r):
     else:
         r.add("Capture", WARN if not launcher.exists() else FAIL, "hook launcher",
               "missing" if not launcher.exists() else "not executable",
-              "Run: ./chronicle-cli install")
+              f"Run: {CMD} install")
 
     if sys.platform == "darwin":
         out = subprocess.run(["launchctl", "list"], capture_output=True, text=True).stdout
@@ -188,7 +189,7 @@ def check_capture(r):
             r.add("Capture", OK, "background indexer", "loaded, every 30 min")
         else:
             r.add("Capture", WARN, "background indexer", "not loaded",
-                  "Run: ./chronicle-cli install (hooks still cover you)")
+                  f"Run: {CMD} install (hooks still cover you)")
     else:
         r.add("Capture", WARN, "background indexer", f"unsupported on {sys.platform}",
               "macOS only — the hooks cover the same ground")
@@ -204,9 +205,9 @@ def check_capture(r):
         else:
             r.add("Capture", FAIL, "hooks run anywhere",
                   (out.stderr.strip().splitlines() or ["exit " + str(out.returncode)])[-1][:90],
-                  "Run: ./chronicle-cli install")
+                  f"Run: {CMD} install")
     except Exception as ex:
-        r.add("Capture", FAIL, "hooks run anywhere", str(ex)[:90], "Run: ./chronicle-cli install")
+        r.add("Capture", FAIL, "hooks run anywhere", str(ex)[:90], f"Run: {CMD} install")
 
     log = ROOT / "hooks.log"
     if log.exists():
@@ -239,9 +240,9 @@ def check_access(r):
         good = str(INSTALL_DIR) in body and "{{" not in body
         r.add("Access", OK if good else FAIL, "skill",
               str(skill) + ("" if good else " — placeholders not rendered"),
-              "" if good else "Run: ./chronicle-cli install")
+              "" if good else f"Run: {CMD} install")
     else:
-        r.add("Access", WARN, "skill", "not installed", "Run: ./chronicle-cli install")
+        r.add("Access", WARN, "skill", "not installed", f"Run: {CMD} install")
 
     try:
         s = json.loads((pathlib.Path.home() / ".claude" / "settings.json").read_text())
@@ -250,7 +251,7 @@ def check_access(r):
         entry = None
     if not entry:
         r.add("Access", WARN, "mcp server", "not registered",
-              "Optional — run: ./chronicle-cli install --mcp")
+              f"Optional — run: {CMD} install --mcp")
     else:
         try:
             p = subprocess.Popen([sys.executable, "-m", "chronicle.mcp"], cwd=str(INSTALL_DIR),
@@ -270,7 +271,7 @@ def check_access(r):
                   f"responds, protocol {reply['result']['protocolVersion']}, {len(tools)} tools")
         except Exception as ex:
             r.add("Access", FAIL, "mcp server", f"registered but not responding: {ex}",
-                  "Run: ./chronicle-cli install --mcp")
+                  f"Run: {CMD} install --mcp")
 
     import shutil as _sh
     which = _sh.which("chronicle")
@@ -287,13 +288,13 @@ def check_access(r):
             else:
                 r.add("Access", FAIL, "chronicle on PATH",
                       (probe.stderr.strip().splitlines() or ["failed"])[-1][:90],
-                      "Run: ./chronicle-cli install")
+                      f"Run: {CMD} install")
         else:
             r.add("Access", WARN, "chronicle on PATH",
                   f"{which} points somewhere else", "Another tool owns that name")
     else:
         r.add("Access", WARN, "chronicle on PATH", "not linked",
-              f"Run: ./chronicle-cli install, or ln -s {INSTALL_DIR}/chronicle-cli ~/.local/bin/chronicle")
+              f"Run: {CMD} install, or ln -s {INSTALL_DIR}/chronicle-cli ~/.local/bin/chronicle")
 
     s = socket.socket()
     try:
@@ -301,7 +302,7 @@ def check_access(r):
         r.add("Access", OK, "dashboard port", "7777 free")
     except OSError:
         r.add("Access", WARN, "dashboard port", "7777 in use",
-              "Use: ./chronicle-cli serve -p 7788")
+              f"Use: {CMD} serve -p 7788")
     finally:
         s.close()
 
@@ -352,7 +353,7 @@ def check_safety(r, con):
                               "WHERE text LIKE '%[REDACTED:%'").fetchone()["n"]
             r.add("Safety", OK if not leaked else FAIL, "index is clean",
                   f"{red} redaction(s) stored, {leaked} live-looking key(s) present",
-                  "" if not leaked else "Run: ./chronicle-cli index --rebuild")
+                  "" if not leaked else f"Run: {CMD} index --rebuild")
         except Exception:
             pass
 
