@@ -433,6 +433,36 @@ def cmd_mcp(con, a):
     mcp.serve()
 
 
+def cmd_doctor(con, a):
+    from . import doctor
+    rep = doctor.run()
+    _rule("Chronicle doctor")
+    mark = {doctor.OK: G + "✓" + R, doctor.WARN: Y + "!" + R, doctor.FAIL: "\033[31m✗" + R}
+    section = None
+    for sec, status, label, detail, fix in rep.rows:
+        if sec != section:
+            section = sec
+            print(f"\n  {B}{sec}{R}")
+        print(f"    {mark[status]} {label:<20}{D}{detail}{R}")
+        if fix:
+            print(f"      {Y}→ {fix}{R}")
+    c = rep.counts()
+    unindexed = any(l == "contents" and st != doctor.OK for _, st, l, _, _ in rep.rows)
+    print()
+    if unindexed and not c[doctor.FAIL]:
+        print(f"  {Y}nothing indexed yet{R} — the install looks fine, but there is no history "
+              f"to answer from.\n  Run: ./chronicle-cli index")
+    elif c[doctor.FAIL]:
+        print(f"  \033[31m{c[doctor.FAIL]} failing{R}, {c[doctor.WARN]} warning, "
+              f"{c[doctor.OK]} passing — fix the ✗ items above")
+    elif c[doctor.WARN]:
+        print(f"  {G}healthy{R} — {c[doctor.OK]} passing, {c[doctor.WARN]} optional "
+              f"item{'s' if c[doctor.WARN] != 1 else ''} not set up")
+    else:
+        print(f"  {G}everything passing{R} ({c[doctor.OK]} checks)")
+    return 1 if c[doctor.FAIL] else 0
+
+
 def cmd_serve(con, a):
     from . import web
     web.serve(a.port, not a.no_open)
@@ -484,6 +514,9 @@ def main(argv=None):
     x = sub.add_parser("map", help="where work launched in one folder actually landed")
     x.add_argument("--cross", action="store_true", help="only rows that cross projects")
     x.set_defaults(fn=cmd_map)
+
+    x = sub.add_parser("doctor", help="check that the whole install is working")
+    x.set_defaults(fn=cmd_doctor)
 
     x = sub.add_parser("serve", help="open the local dashboard")
     x.add_argument("-p", "--port", type=int, default=7777)

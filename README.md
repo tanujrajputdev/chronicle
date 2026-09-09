@@ -61,7 +61,13 @@ Then, to make it automatic:
 ./chronicle-cli install --mcp  # also register the read-only MCP server
 ```
 
-Restart Claude Code afterwards. `./chronicle-cli install --uninstall` removes every trace, and backs up your `settings.json` first.
+Restart Claude Code afterwards, then confirm everything is wired up:
+
+```bash
+./chronicle-cli doctor
+```
+
+`./chronicle-cli install --uninstall` removes every trace, and backs up your `settings.json` first.
 
 The installer **merges** into `~/.claude/settings.json` — hooks from other tools are left exactly where they are.
 
@@ -199,6 +205,7 @@ One SQLite file at `~/.chronicle/chronicle.db` — 11 MB for 500 MB of transcrip
 | Command | What it does |
 |---|---|
 | `index [--rebuild]` | Ingest new or changed sessions. Incremental and idempotent. |
+| `doctor` | Check the whole install: environment, index, hooks, MCP, redaction. 21 checks. |
 | `stats` | Corpus overview. |
 | `projects` | Every project, most recently worked first. |
 | `project <name>` | One project in full: totals, every repo it spans, biggest work, agent runs. |
