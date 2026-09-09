@@ -41,12 +41,22 @@ def _launcher():
     return str(LAUNCHER)
 
 
-BIN_CANDIDATES = ["/opt/homebrew/bin", "/usr/local/bin",
-                  str(pathlib.Path.home() / ".local/bin"), str(pathlib.Path.home() / "bin")]
+# user-owned directories first: dropping a symlink into a package manager's bin
+# is not ours to do on someone else's machine, and brew can clobber it
+BIN_CANDIDATES = [str(pathlib.Path.home() / ".local/bin"), str(pathlib.Path.home() / "bin"),
+                  "/usr/local/bin", "/opt/homebrew/bin"]
 
 
 def _link_command():
     """Put `chronicle` on PATH so the docs match what actually works in a terminal."""
+    existing = shutil.which("chronicle")
+    target = INSTALL_DIR / "chronicle-cli"
+    if existing:
+        try:
+            if pathlib.Path(existing).resolve() == target.resolve():
+                return existing          # already reachable; do not add a second link
+        except OSError:
+            pass
     path_dirs = os.environ.get("PATH", "").split(":")
     target = INSTALL_DIR / "chronicle-cli"
     for d in BIN_CANDIDATES:
