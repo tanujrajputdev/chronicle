@@ -193,6 +193,21 @@ def check_capture(r):
         r.add("Capture", WARN, "background indexer", f"unsupported on {sys.platform}",
               "macOS only — the hooks cover the same ground")
 
+    # the bug this catches: hooks run with the user's project as cwd, so a launcher that
+    # resolves anything from the current directory works only inside the install folder
+    try:
+        out = subprocess.run([str(launcher), "sessionstart"], input='{"session_id":"doctor",'
+                             '"cwd":"/","trigger":"startup"}', capture_output=True, text=True,
+                             cwd="/", timeout=30)
+        if out.returncode == 0 and "Traceback" not in out.stderr and "ModuleNotFound" not in out.stderr:
+            r.add("Capture", OK, "hooks run anywhere", "launcher works with an unrelated cwd")
+        else:
+            r.add("Capture", FAIL, "hooks run anywhere",
+                  (out.stderr.strip().splitlines() or ["exit " + str(out.returncode)])[-1][:90],
+                  "Run: ./chronicle-cli install")
+    except Exception as ex:
+        r.add("Capture", FAIL, "hooks run anywhere", str(ex)[:90], "Run: ./chronicle-cli install")
+
     log = ROOT / "hooks.log"
     if log.exists():
         cutoff = datetime.date.today() - datetime.timedelta(days=7)
@@ -256,6 +271,29 @@ def check_access(r):
         except Exception as ex:
             r.add("Access", FAIL, "mcp server", f"registered but not responding: {ex}",
                   "Run: ./chronicle-cli install --mcp")
+
+    import shutil as _sh
+    which = _sh.which("chronicle")
+    if which:
+        try:
+            resolved = pathlib.Path(which).resolve()
+            good = resolved == (INSTALL_DIR / "chronicle-cli").resolve()
+        except OSError:
+            good = False
+        if good:
+            probe = subprocess.run([which, "stats"], capture_output=True, text=True, cwd="/")
+            if probe.returncode == 0:
+                r.add("Access", OK, "chronicle on PATH", f"{which} works from any directory")
+            else:
+                r.add("Access", FAIL, "chronicle on PATH",
+                      (probe.stderr.strip().splitlines() or ["failed"])[-1][:90],
+                      "Run: ./chronicle-cli install")
+        else:
+            r.add("Access", WARN, "chronicle on PATH",
+                  f"{which} points somewhere else", "Another tool owns that name")
+    else:
+        r.add("Access", WARN, "chronicle on PATH", "not linked",
+              f"Run: ./chronicle-cli install, or ln -s {INSTALL_DIR}/chronicle-cli ~/.local/bin/chronicle")
 
     s = socket.socket()
     try:

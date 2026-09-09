@@ -1,6 +1,16 @@
 #!/bin/sh
-# Chronicle launcher. Finds a Python new enough to run it and says so plainly if it can't.
-DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Chronicle launcher. Resolves through symlinks, finds a Python new enough, and
+# says so plainly if it cannot.
+SELF="$0"
+while [ -L "$SELF" ]; do
+    LINK=$(readlink "$SELF")
+    case "$LINK" in
+        /*) SELF="$LINK" ;;
+        *)  SELF="$(dirname -- "$SELF")/$LINK" ;;
+    esac
+done
+DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
+
 for PY in "${CHRONICLE_PYTHON:-}" python3 python3.13 python3.12 python3.11 python; do
     [ -n "$PY" ] || continue
     command -v "$PY" >/dev/null 2>&1 || continue

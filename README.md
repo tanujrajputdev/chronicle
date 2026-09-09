@@ -67,6 +67,14 @@ Restart Claude Code afterwards, then confirm everything is wired up:
 ./chronicle-cli doctor
 ```
 
+`install` also links `chronicle` into the first writable directory on your `PATH`, so every
+command below works from anywhere:
+
+```bash
+cd ~/any-project
+chronicle brief          # no ./ and no cd needed
+```
+
 `./chronicle-cli install --uninstall` removes every trace, and backs up your `settings.json` first.
 
 The installer **merges** into `~/.claude/settings.json` — hooks from other tools are left exactly where they are.
