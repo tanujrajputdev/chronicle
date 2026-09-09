@@ -561,8 +561,7 @@ def main(argv=None):
     if not getattr(a, "fn", None):
         p.print_help(); return 0
     con = db.connect()
-    a.fn(con, a)
-    return 0
+    return a.fn(con, a) or 0
 
 
 if __name__ == "__main__":
