@@ -175,8 +175,6 @@ def build(con, rebuild=False, verbose=True, progress=None):
         stats["agents"] += 1
     con.commit()
 
-    fold_descendants(con)
-
     for pid, paths in proj_paths.items():
         prev = con.execute("SELECT paths FROM projects WHERE id=?", (pid,)).fetchone()
         allp = set(json.loads(prev["paths"])) if prev else set()
@@ -188,6 +186,8 @@ def build(con, rebuild=False, verbose=True, progress=None):
         stats["vocab"] = recall.build_vocab(con)
     except Exception:
         stats["vocab"] = 0
+    fold_descendants(con)
+
     con.execute("INSERT OR REPLACE INTO meta VALUES ('last_index',?)",
                 (datetime.datetime.now().isoformat(timespec="seconds"),))
     con.commit()
@@ -210,6 +210,13 @@ def fold_descendants(con):
         if target and target != pid:
             merged[pid] = target
     for src, dst in merged.items():
+        old = con.execute("SELECT paths FROM projects WHERE id=?", (src,)).fetchone()
+        new = con.execute("SELECT paths FROM projects WHERE id=?", (dst,)).fetchone()
+        if old:
+            merged_paths = sorted(set(json.loads(old["paths"] or "[]"))
+                                  | set(json.loads(new["paths"] or "[]") if new else []))
+            con.execute("UPDATE projects SET paths=? WHERE id=?",
+                        (json.dumps(merged_paths), dst))
         for t in ("sessions", "episodes", "agent_runs"):
             con.execute(f"UPDATE {t} SET project_id=? WHERE project_id=?", (dst, src))
         con.execute("UPDATE OR REPLACE episode_projects SET project_id=? WHERE project_id=?",

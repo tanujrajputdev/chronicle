@@ -13,17 +13,27 @@ MAX_CHARS = 1800
 
 
 def project_for_cwd(con, cwd):
-    """Longest path match against every root this project has ever touched."""
+    """Which project owns this directory?
+
+    An exact match wins, then the deepest ancestor that contains it. Only if
+    nothing contains it do we accept a project living in a subdirectory —
+    otherwise `~/acme` resolves to whatever project owns `~/acme/reports`."""
     if not cwd:
         return None
-    best, pid = -1, None
+    cwd = cwd.rstrip("/")
+    exact, ancestor, descendant = None, (-1, None), (-1, None)
     for r in con.execute("SELECT id, paths FROM projects"):
         for p in json.loads(r["paths"] or "[]"):
-            if cwd == p or cwd.startswith(p.rstrip("/") + "/") or p.startswith(cwd.rstrip("/") + "/"):
-                score = len(os.path.commonprefix([cwd, p]))
-                if score > best:
-                    best, pid = score, r["id"]
-    return pid
+            p = p.rstrip("/")
+            if cwd == p:
+                exact = r["id"]
+            elif cwd.startswith(p + "/"):
+                if len(p) > ancestor[0]:
+                    ancestor = (len(p), r["id"])
+            elif p.startswith(cwd + "/"):
+                if -len(p) > descendant[0] or descendant[1] is None:
+                    descendant = (-len(p), r["id"])
+    return exact or ancestor[1] or descendant[1]
 
 
 def _ago(iso):

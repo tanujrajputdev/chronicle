@@ -9,32 +9,32 @@ The local index of every Claude Code session on this machine. Query it with the 
 **never read raw `.jsonl` transcripts**, they are hundreds of megabytes and will blow the
 context window. The index exists precisely so you don't have to.
 
-Run everything from `{{CHRONICLE_DIR}}` (or use the absolute path shown):
+These are absolute paths — run them from wherever the user is; no `cd` needed:
 
 ```
-./chronicle-cli stats                      # corpus overview
-./chronicle-cli projects                   # every project, most recent first
-./chronicle-cli project <name>             # one project in full: tokens, repos, agents, top work
-./chronicle-cli timeline <project> -n 20   # episodes, newest first
-./chronicle-cli search <query> [-p proj]   # full-text over episodes + agent runs
-./chronicle-cli show <episode-id>          # one episode: files, tools, agents, prompts
-./chronicle-cli agents [-p proj]           # subagent + workflow runs
-./chronicle-cli agent <run-id>             # one agent run: task given, conclusion reached
-./chronicle-cli map [--cross]              # where work launched in one folder actually landed
-./chronicle-cli serve                      # local dashboard at 127.0.0.1:7777
-./chronicle-cli brief [project]            # what a new session here is told automatically
-./chronicle-cli why "<text>"               # would recall fire for this? which gate stopped it?
-./chronicle-cli report <project> --since 7d  # a work log you can send to a client
-./chronicle-cli index                      # pick up anything new (incremental, seconds)
-./chronicle-cli recall [session]           # the last pre-compaction checkpoint, in full
-./chronicle-cli checkpoints                # every checkpoint saved so far
+{{CHRONICLE_DIR}}/chronicle-cli stats                      # corpus overview
+{{CHRONICLE_DIR}}/chronicle-cli projects                   # every project, most recent first
+{{CHRONICLE_DIR}}/chronicle-cli project <name>             # one project in full: tokens, repos, agents, top work
+{{CHRONICLE_DIR}}/chronicle-cli timeline <project> -n 20   # episodes, newest first
+{{CHRONICLE_DIR}}/chronicle-cli search <query> [-p proj]   # full-text over episodes + agent runs
+{{CHRONICLE_DIR}}/chronicle-cli show <episode-id>          # one episode: files, tools, agents, prompts
+{{CHRONICLE_DIR}}/chronicle-cli agents [-p proj]           # subagent + workflow runs
+{{CHRONICLE_DIR}}/chronicle-cli agent <run-id>             # one agent run: task given, conclusion reached
+{{CHRONICLE_DIR}}/chronicle-cli map [--cross]              # where work launched in one folder actually landed
+{{CHRONICLE_DIR}}/chronicle-cli serve                      # local dashboard at 127.0.0.1:7777
+{{CHRONICLE_DIR}}/chronicle-cli brief [project]            # what a new session here is told automatically
+{{CHRONICLE_DIR}}/chronicle-cli why "<text>"               # would recall fire for this? which gate stopped it?
+{{CHRONICLE_DIR}}/chronicle-cli report <project> --since 7d  # a work log you can send to a client
+{{CHRONICLE_DIR}}/chronicle-cli index                      # pick up anything new (incremental, seconds)
+{{CHRONICLE_DIR}}/chronicle-cli recall [session]           # the last pre-compaction checkpoint, in full
+{{CHRONICLE_DIR}}/chronicle-cli checkpoints                # every checkpoint saved so far
 ```
 
 ## How to answer
 
 0. **For "how much / what happened on <project>"** use `project <name>` — it rolls up every
    repo the project lives in and is almost always the right first call.
-1. **Refresh first** if the question touches recent work: `./chronicle-cli index` is
+1. **Refresh first** if the question touches recent work: `{{CHRONICLE_DIR}}/chronicle-cli index` is
    incremental and takes seconds.
 2. **Locate, then drill.** Start with `search` or `timeline` to find episode ids, then `show`
    the two or three that matter. Don't `show` more than ~5 — summarise instead.
@@ -48,7 +48,7 @@ Run everything from `{{CHRONICLE_DIR}}` (or use the absolute path shown):
 ## Writing an update for someone else
 
 When the user asks for a client update, a standup, a progress note or "what did we ship this
-week", run `./chronicle-cli report <project> --since 7d` and rewrite the result as prose in
+week", run `{{CHRONICLE_DIR}}/chronicle-cli report <project> --since 7d` and rewrite the result as prose in
 their voice. The command gives you the facts — sessions, instructions, files, research, open
 items — it does not write the message. Do not invent outcomes that aren't in it; if something
 looks unfinished, it belongs under "still open".
@@ -76,7 +76,7 @@ or quote it back to the user.
 
 A `PreCompact` hook saves a checkpoint every time context is about to be summarised away, and
 a `SessionStart` hook feeds it back in. If the user says you have forgotten something, or asks
-what you were doing before, run `./chronicle-cli recall` — it holds their prompts verbatim, the
+what you were doing before, run `{{CHRONICLE_DIR}}/chronicle-cli recall` — it holds their prompts verbatim, the
 open task list and the files in flight, none of which survive a summary intact.
 
 ## The MCP server
@@ -107,4 +107,4 @@ later prompts may reference things the transcript no longer explains) · `Nf` N 
   many. Episode ids are stable between runs unless `--rebuild` is used.
 - Secrets are redacted at ingest; `[REDACTED:TYPE]` in output is expected, not an error.
 - `aliases.json` maps filesystem paths to logical projects. If a project looks split or
-  mislabelled, fix it there and run `./chronicle-cli index --rebuild`.
+  mislabelled, fix it there and run `{{CHRONICLE_DIR}}/chronicle-cli index --rebuild`.
