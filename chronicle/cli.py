@@ -434,6 +434,31 @@ def cmd_mcp(con, a):
     mcp.serve()
 
 
+def cmd_selftest(con, a):
+    from . import selftest
+    import time
+    _rule("Chronicle self test")
+    print(f"  {D}synthetic corpus in a sandbox — your index and settings are not touched{R}\n")
+    t0 = time.time()
+    s = selftest.run(verbose=a.verbose)
+    for ok, name, detail in s.results:
+        if ok:
+            if a.verbose:
+                print(f"    {G}✓{R} {name}")
+        else:
+            print(f"    \033[31m✗{R} {name}")
+            for line in str(detail).splitlines()[:4]:
+                print(f"        {D}{line[:110]}{R}")
+    n, f = len(s.results), len(s.failed)
+    el = time.time() - t0
+    print()
+    if f:
+        print(f"  \033[31m{f} of {n} checks failed{R}  ({el:.1f}s)")
+    else:
+        print(f"  {G}all {n} checks passed{R}  ({el:.1f}s)")
+    return 1 if f else 0
+
+
 def cmd_doctor(con, a):
     from . import doctor
     rep = doctor.run()
@@ -515,6 +540,10 @@ def main(argv=None):
     x = sub.add_parser("map", help="where work launched in one folder actually landed")
     x.add_argument("--cross", action="store_true", help="only rows that cross projects")
     x.set_defaults(fn=cmd_map)
+
+    x = sub.add_parser("selftest", help="run the full suite against a synthetic corpus")
+    x.add_argument("-v", "--verbose", action="store_true", help="list passing checks too")
+    x.set_defaults(fn=cmd_selftest)
 
     x = sub.add_parser("doctor", help="check that the whole install is working")
     x.set_defaults(fn=cmd_doctor)

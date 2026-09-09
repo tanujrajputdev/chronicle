@@ -76,7 +76,14 @@ def _link_command():
 
 
 def _is_ours(h):
-    return MARK in json.dumps(h) or str(LAUNCHER) in json.dumps(h)
+    """Recognise our own hook entries, including ones written by an older or
+    since-moved copy of Chronicle — otherwise uninstalling from a new clone
+    leaves the old install's hooks behind, failing on every prompt."""
+    blob = json.dumps(h)
+    if MARK in blob or str(LAUNCHER) in blob:
+        return True
+    cmd = (h.get("command") or "").split()
+    return bool(cmd) and os.path.basename(cmd[0]) == "chronicle-hook"
 
 
 def _merge(settings, cmd):

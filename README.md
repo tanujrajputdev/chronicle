@@ -213,7 +213,8 @@ One SQLite file at `~/.chronicle/chronicle.db` — 11 MB for 500 MB of transcrip
 | Command | What it does |
 |---|---|
 | `index [--rebuild]` | Ingest new or changed sessions. Incremental and idempotent. |
-| `doctor` | Check the whole install: environment, index, hooks, MCP, redaction. 21 checks. |
+| `doctor` | Check *this* install: environment, index, hooks, MCP, redaction. 21 checks. |
+| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 57 checks. |
 | `stats` | Corpus overview. |
 | `projects` | Every project, most recently worked first. |
 | `project <name>` | One project in full: totals, every repo it spans, biggest work, agent runs. |
@@ -371,10 +372,19 @@ Issues and pull requests welcome. Two rules that are not negotiable:
 Before opening a PR:
 
 ```bash
+chronicle selftest                        # 57 checks, ~7s, sandboxed
 python3.11 -m py_compile chronicle/*.py   # the supported floor
-./chronicle-cli index --rebuild && ./chronicle-cli stats
-./chronicle-cli why "some prompt text"    # audit the recall gates
 ```
+
+`selftest` builds a synthetic corpus — including truncated JSON, binary junk, a 150 KB line
+and records with a schema it has never seen — then asserts on known-correct answers: that a
+six-hour gap yields exactly two episodes, that an edit in another repo is attributed there,
+that a subagent's conclusion survives, that a token is redacted before it is stored, and that
+episode ids do not move across a rebuild. It never reads your real transcripts and never
+touches your index or `settings.json`.
+
+**`doctor` and `selftest` answer different questions.** `doctor` asks *is my install wired up*;
+`selftest` asks *does the code still work*. Run `selftest` before you push.
 
 If you index your own history and something looks wrong — a bad episode split, a project attributed to the wrong repo, a title that makes no sense — that is the most useful issue you can file. Include the output of `chronicle stats` and `chronicle map --cross`.
 

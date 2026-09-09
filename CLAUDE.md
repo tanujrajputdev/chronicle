@@ -36,7 +36,12 @@ milliseconds.
 ## Checking a change
 
 ```bash
-./chronicle-cli index --rebuild && ./chronicle-cli stats
-./chronicle-cli why "some prompt text"     # audit the repeat-work gates
+chronicle selftest                         # 57 checks against a synthetic corpus, ~7s
 python3.11 -m py_compile chronicle/*.py    # the supported floor
+chronicle doctor                           # is this machine's install wired up
 ```
+
+`selftest` is the gate before any push. It asserts on known-correct answers rather than
+"it ran without error", and it is sandboxed — it never reads real transcripts or writes to
+the real index or `settings.json`. If you change segmentation, attribution, redaction or id
+assignment, add a case to `chronicle/selftest.py` in the same commit.
