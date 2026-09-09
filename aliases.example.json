@@ -1,0 +1,17 @@
+{
+  "_readme": "Maps filesystem paths to logical projects. Longest prefix wins. Applies to the session's working directory AND to every file an episode edits, so work done outside the folder you launched in still lands on the right project. Copy to aliases.json, edit, then run: ./chronicle-cli index --rebuild",
+  "projects": {
+    "/Users/you/work/acme-web": "acme",
+    "/Users/you/work/acme-api": "acme",
+    "/Users/you/Documents/acme-legacy": "acme"
+  },
+  "labels": {
+    "acme": "Acme Corp"
+  },
+  "ignore_roots": [
+    "/private/tmp",
+    "/tmp",
+    "/var/folders"
+  ],
+  "recall_exclude": []
+}

@@ -1,0 +1,22 @@
+# Your own data — never commit these
+aliases.json
+projects/
+MEMORY.md
+.enough/
+
+# Generated at install time
+chronicle-hook
+skill/SKILL.md
+
+# Personal working documents
+update.md
+*-update.md
+chronicle-report.html
+chronicle-pitch.html
+
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+.DS_Store

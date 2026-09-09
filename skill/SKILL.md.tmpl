@@ -1,0 +1,110 @@
+---
+name: chronicle
+description: Answer questions about past Claude Code work on this machine — what was done on a project, when, by which agent, what was decided, what a subagent concluded, what a session cost. Use for any question about history, past sessions, previous decisions, or prior agent runs. Triggers on "what did we", "when did I", "which agent", "what was decided", "last time", "have we already", "show me the work on".
+---
+
+# Chronicle
+
+The local index of every Claude Code session on this machine. Query it with the CLI —
+**never read raw `.jsonl` transcripts**, they are hundreds of megabytes and will blow the
+context window. The index exists precisely so you don't have to.
+
+Run everything from `{{CHRONICLE_DIR}}` (or use the absolute path shown):
+
+```
+./chronicle-cli stats                      # corpus overview
+./chronicle-cli projects                   # every project, most recent first
+./chronicle-cli project <name>             # one project in full: tokens, repos, agents, top work
+./chronicle-cli timeline <project> -n 20   # episodes, newest first
+./chronicle-cli search <query> [-p proj]   # full-text over episodes + agent runs
+./chronicle-cli show <episode-id>          # one episode: files, tools, agents, prompts
+./chronicle-cli agents [-p proj]           # subagent + workflow runs
+./chronicle-cli agent <run-id>             # one agent run: task given, conclusion reached
+./chronicle-cli map [--cross]              # where work launched in one folder actually landed
+./chronicle-cli serve                      # local dashboard at 127.0.0.1:7777
+./chronicle-cli brief [project]            # what a new session here is told automatically
+./chronicle-cli why "<text>"               # would recall fire for this? which gate stopped it?
+./chronicle-cli report <project> --since 7d  # a work log you can send to a client
+./chronicle-cli index                      # pick up anything new (incremental, seconds)
+./chronicle-cli recall [session]           # the last pre-compaction checkpoint, in full
+./chronicle-cli checkpoints                # every checkpoint saved so far
+```
+
+## How to answer
+
+0. **For "how much / what happened on <project>"** use `project <name>` — it rolls up every
+   repo the project lives in and is almost always the right first call.
+1. **Refresh first** if the question touches recent work: `./chronicle-cli index` is
+   incremental and takes seconds.
+2. **Locate, then drill.** Start with `search` or `timeline` to find episode ids, then `show`
+   the two or three that matter. Don't `show` more than ~5 — summarise instead.
+3. **Follow the agents.** If an episode has a `⛭` marker it spawned subagents; their
+   conclusions are often the real answer. `agent <id>` prints the full result.
+4. **Cite what you found** — episode id and date, e.g. "in #388 on 3 Sep". The user can then
+   run `show` themselves.
+5. **Check the hand-written notes too**: `projects/<name>/decisions.md` holds context Chronicle
+   can't infer. `projects/<name>/DIGEST.md` is generated — never edit it.
+
+## Writing an update for someone else
+
+When the user asks for a client update, a standup, a progress note or "what did we ship this
+week", run `./chronicle-cli report <project> --since 7d` and rewrite the result as prose in
+their voice. The command gives you the facts — sessions, instructions, files, research, open
+items — it does not write the message. Do not invent outcomes that aren't in it; if something
+looks unfinished, it belongs under "still open".
+
+## What a session already knows
+
+Every session in a project starts with a Chronicle brief injected automatically: the last
+session's title, how it ended, open tasks, recently edited files and any standing decisions.
+So when the user says "carry on" or "what were we doing", that context is already in front of
+you — don't re-run a search for it. Go deeper only when they ask something the brief doesn't
+answer.
+
+## When Chronicle says "you have worked on this before"
+
+A `UserPromptSubmit` hook occasionally injects one or two past episodes that closely match what
+the user just asked. It is deliberately near-silent — roughly one prompt in 250 — so when it
+does fire, take it seriously: open the episode and say what was concluded before, rather than
+starting the work again. It never loads anything by itself. If a match looks wrong, say so;
+`chronicle why "<text>"` shows exactly which gates it passed.
+
+Episode ids are permanent. `#107` today is `#107` next month, so it is safe to write one down
+or quote it back to the user.
+
+## After a compaction
+
+A `PreCompact` hook saves a checkpoint every time context is about to be summarised away, and
+a `SessionStart` hook feeds it back in. If the user says you have forgotten something, or asks
+what you were doing before, run `./chronicle-cli recall` — it holds their prompts verbatim, the
+open task list and the files in flight, none of which survive a summary intact.
+
+## The MCP server
+
+The same index is exposed read-only over MCP as `chronicle` (9 tools: projects, search,
+timeline, project, episode, agent_run, brief, report, recall). Prefer the CLI when you are
+already in `{{CHRONICLE_DIR}}` — it is cheaper. The MCP tools exist so sessions in *other*
+projects, and other MCP clients, can reach this history without leaving their directory.
+
+## Search syntax
+
+SQLite FTS5: bare words are AND-ed; `OR`, `NOT`, `"exact phrase"` and `prefix*` all work.
+If a query returns nothing, retry with fewer or broader terms before concluding it isn't there.
+
+## Reading the markers
+
+`⛭N` N subagent runs · `⚑N` N compactions (context was destroyed there — the episode's
+later prompts may reference things the transcript no longer explains) · `Nf` N files edited.
+
+## Notes
+
+- **A project is not a folder.** Work launched in one directory routinely edits repos elsewhere
+  — one project's sessions routinely edit several repos, and work started in one folder often
+  lands in another. `-p <project>`
+  matches on the files an episode actually edited as well as the folder it was launched in, so
+  it already covers this. `map --cross` lists any path still landing on the wrong project.
+- Episodes are segmented on a 4-hour idle gap, so one Claude Code "session" usually contains
+  many. Episode ids are stable between runs unless `--rebuild` is used.
+- Secrets are redacted at ingest; `[REDACTED:TYPE]` in output is expected, not an error.
+- `aliases.json` maps filesystem paths to logical projects. If a project looks split or
+  mislabelled, fix it there and run `./chronicle-cli index --rebuild`.
