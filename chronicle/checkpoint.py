@@ -14,6 +14,13 @@ CP_DIR = ROOT / "checkpoints"
 MAX_PROMPTS, MAX_FILES, MAX_TASKS = 12, 25, 20
 
 
+def _scrub_task(t):
+    """Task text is written to disk and handed back into the next context, so it
+    goes through the same scrubber as everything else."""
+    return {**t, "subject": scrub(t.get("subject", ""))[0],
+            "description": scrub(t.get("description", ""))[0]}
+
+
 def build(transcript_path, session_id=None, cwd=None, trigger="auto"):
     """Read a live transcript and distil everything since the last compaction."""
     records = []
@@ -97,8 +104,8 @@ def build(transcript_path, session_id=None, cwd=None, trigger="auto"):
         "files": files[-MAX_FILES:],
         "roots": sorted({r for r in (file_root(f) for f in files) if r}),
         "tools": dict(tools.most_common(10)),
-        "open_tasks": open_tasks[:MAX_TASKS],
-        "done_tasks": done_tasks[:MAX_TASKS],
+        "open_tasks": [_scrub_task(x) for x in open_tasks[:MAX_TASKS]],
+        "done_tasks": [_scrub_task(x) for x in done_tasks[:MAX_TASKS]],
         "last_assistant": scrub(_clean(last_asst)[:900])[0],
     }
 

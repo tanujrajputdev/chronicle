@@ -380,6 +380,17 @@ def run(verbose=False):
             assert "db.connect()" not in src, "dashboard opened a writable connection"
         s.check("the dashboard cannot write to the index", dashboard_is_read_only)
 
+        def checkpoint_scrubs_tasks():
+            """Task text reaches disk and the next context; it needs the scrubber too."""
+            from .checkpoint import _scrub_task
+            out = _scrub_task({"subject": "push with ghp_" + "b" * 36,
+                               "description": '"password": "hunter2secret"',
+                               "status": "pending"})
+            assert "ghp_" not in out["subject"], out["subject"]
+            assert "hunter2secret" not in out["description"], out["description"]
+            assert out["status"] == "pending", "scrubbing dropped a field"
+        s.check("checkpoints redact task text as well as prompts", checkpoint_scrubs_tasks)
+
         def isolation():
             real = os.path.expanduser("~/.chronicle/chronicle.db")
             assert os.path.realpath(db) != os.path.realpath(real), "selftest used the real index"
