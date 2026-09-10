@@ -331,6 +331,17 @@ def check_safety(r, con):
           "no outbound client in any module" if not outbound else f"found {set(outbound)}",
           "" if not outbound else "Chronicle must never make a network call")
 
+    modes = []
+    for path in (ROOT, DB_PATH):
+        try:
+            modes.append((path, os.stat(path).st_mode & 0o077))
+        except OSError:
+            pass
+    loose = [str(p) for p, extra in modes if extra]
+    r.add("Safety", OK if not loose else WARN, "index is private",
+          "readable only by you" if not loose else f"group/other can read {', '.join(loose)}",
+          "" if not loose else f"chmod 700 {ROOT} && chmod 600 {DB_PATH}")
+
     gi = INSTALL_DIR / ".gitignore"
     protected = {"aliases.json", "projects/", "MEMORY.md"}
     if gi.exists():

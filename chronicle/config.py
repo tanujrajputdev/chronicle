@@ -19,6 +19,12 @@ MAX_ASST_TEXT = 4000
 MAX_BODY = 60000
 
 ROOT.mkdir(parents=True, exist_ok=True)
+try:
+    # the index is a verbatim record of every prompt typed on this machine —
+    # it has no business being readable by other accounts on a shared box
+    ROOT.chmod(0o700)
+except OSError:
+    pass
 
 
 DEFAULT_IGNORE = ["/private/tmp", "/tmp", "/var/folders",

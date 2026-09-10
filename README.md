@@ -142,7 +142,15 @@ Day by day: sessions, the instructions you gave, files changed, research produce
 chronicle serve      # 127.0.0.1:7777
 ```
 
-Overview ledger with per-week activity, project rollups across every repo, an episode browser, the agent-run viewer, search, and checkpoints.
+A developer console over the index: KPI row, token composition, a day-by-day activity grid,
+project rollups with weekly sparklines, a dedicated token-usage page (by project, month and
+day), an episode browser, the agent-run viewer, full-text search with highlighting, and
+checkpoints. Press `/` anywhere to jump to search.
+
+It is deliberately locked down. The connection to the index is read-only, the server answers
+only to a loopback `Host` header — binding to `127.0.0.1` alone does not stop a page you visit
+from rebinding its own hostname at you — every rendered string is escaped including FTS
+snippets, and a strict CSP blocks any outbound request from the page.
 
 ---
 
@@ -213,8 +221,8 @@ One SQLite file at `~/.chronicle/chronicle.db` — 11 MB for 500 MB of transcrip
 | Command | What it does |
 |---|---|
 | `index [--rebuild]` | Ingest new or changed sessions. Incremental and idempotent. |
-| `doctor` | Check *this* install: environment, index, hooks, MCP, redaction. 21 checks. |
-| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 57 checks. |
+| `doctor` | Check *this* install: environment, index, hooks, MCP, redaction. 24 checks. |
+| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 60 checks. |
 | `stats` | Corpus overview. |
 | `tokens [--by project\|day\|month]` | Every token spent, split into input, cache write, cache read and output. |
 | `projects` | Every project, most recently worked first. |
@@ -373,7 +381,7 @@ Issues and pull requests welcome. Two rules that are not negotiable:
 Before opening a PR:
 
 ```bash
-chronicle selftest                        # 57 checks, ~7s, sandboxed
+chronicle selftest                        # 60 checks, ~7s, sandboxed
 python3.11 -m py_compile chronicle/*.py   # the supported floor
 ```
 

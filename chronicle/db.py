@@ -78,10 +78,21 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 """
 
 
+def _private(path):
+    """Owner-only. The index, and the WAL beside it, hold raw prompt text."""
+    import os
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.chmod(f"{path}{suffix}", 0o600)
+        except OSError:
+            pass
+
+
 def connect():
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    _private(DB_PATH)
     return con
 
 

@@ -349,6 +349,37 @@ def run(verbose=False):
             assert not missed, f"redaction missed: {missed}"
         s.check("every redaction pattern still catches", redaction_patterns)
 
+        # ---- dashboard rendering must never execute transcript content
+        def dashboard_escapes():
+            """A prompt containing HTML is ordinary. Rendering it as HTML is not."""
+            from . import web
+            import sqlite3 as _sq
+            c = _sq.connect(":memory:")
+            c.row_factory = _sq.Row
+            c.execute("CREATE VIRTUAL TABLE f USING fts5(a,b,body)")
+            c.execute("INSERT INTO f VALUES('t','o',"
+                      "'the <img src=x onerror=alert(1)> payload was here')")
+            raw = c.execute(f"SELECT snippet(f,2,'{web.HI0}','{web.HI1}','…',20) s "
+                            "FROM f WHERE f MATCH 'payload'").fetchone()["s"]
+            out = web.snip(raw)
+            # the text may still *read* as a tag; it must not *be* one
+            assert "<img" not in out and "&lt;img" in out, f"markup survived: {out}"
+            assert "<em>payload</em>" in out, f"highlight lost: {out}"
+        s.check("the dashboard escapes search snippets", dashboard_escapes)
+
+        def dashboard_host_guard():
+            """Loopback binding alone does not stop DNS rebinding."""
+            from .web import ALLOWED_HOSTS
+            assert "127.0.0.1" in ALLOWED_HOSTS and "localhost" in ALLOWED_HOSTS
+            assert not any(h.endswith(".com") or h == "*" for h in ALLOWED_HOSTS)
+        s.check("the dashboard only answers on loopback hosts", dashboard_host_guard)
+
+        def dashboard_is_read_only():
+            src = (INSTALL_DIR / "chronicle" / "web.py").read_text()
+            assert "db.connect_ro" in src, "dashboard must open the index read-only"
+            assert "db.connect()" not in src, "dashboard opened a writable connection"
+        s.check("the dashboard cannot write to the index", dashboard_is_read_only)
+
         def isolation():
             real = os.path.expanduser("~/.chronicle/chronicle.db")
             assert os.path.realpath(db) != os.path.realpath(real), "selftest used the real index"
