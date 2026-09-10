@@ -105,7 +105,7 @@ later prompts may reference things the transcript no longer explains) · `Nf` N 
   matches on the files an episode actually edited as well as the folder it was launched in, so
   it already covers this. `map --cross` lists any path still landing on the wrong project.
 - Episodes are segmented on a 4-hour idle gap, so one Claude Code "session" usually contains
-  many. Episode ids are stable between runs unless `--rebuild` is used.
+  many. Episode ids are permanent — they survive `--rebuild`, so a written-down `#id` never goes stale.
 - Secrets are redacted at ingest; `[REDACTED:TYPE]` in output is expected, not an error.
 - `aliases.json` maps filesystem paths to logical projects. If a project looks split or
   mislabelled, fix it there and run `{{CHRONICLE_DIR}}/chronicle-cli index --rebuild`.
