@@ -170,7 +170,7 @@ Harness machinery (`<task-notification>`, `/compact`, command wrappers) never st
 
 Work launched in one folder routinely edits repos elsewhere. One project on the reference machine turned out to span five separate repos; another was building an entire application in a different directory tree.
 
-Chronicle attributes a project from **the files an episode actually edits**, not the working directory it was launched in. `chronicle map --cross` shows any path still landing on the wrong project, and `aliases.json` fixes it permanently.
+Chronicle attributes a project from **the files an episode actually edits**, not the working directory it was launched in. That includes files written through the shell: a `cat > file <<EOF`, a redirect or a `sed -i` reports no `file_path`, so without help that work lands in no project at all. `chronicle/shellwrite.py` recovers those paths, and it is deliberately the most conservative code in the project — heredoc bodies are stripped before anything is matched, a candidate has to look like a path, and the file has to exist when the index is built. `chronicle map --cross` shows any path still landing on the wrong project, and `aliases.json` fixes it permanently.
 
 ### 3. References must be permanent
 
@@ -222,7 +222,7 @@ One SQLite file at `~/.chronicle/chronicle.db` — 11 MB for 500 MB of transcrip
 |---|---|
 | `index [--rebuild]` | Ingest new or changed sessions. Incremental and idempotent. |
 | `doctor` | Check *this* install: environment, index, hooks, MCP, redaction. 24 checks. |
-| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 61 checks. |
+| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 64 checks. |
 | `stats` | Corpus overview. |
 | `tokens [--by project\|day\|month]` | Every token spent, split into input, cache write, cache read and output. |
 | `projects` | Every project, most recently worked first. |
@@ -381,7 +381,7 @@ Issues and pull requests welcome. Two rules that are not negotiable:
 Before opening a PR:
 
 ```bash
-chronicle selftest                        # 61 checks, ~7s, sandboxed
+chronicle selftest                        # 64 checks, ~7s, sandboxed
 python3.11 -m py_compile chronicle/*.py   # the supported floor
 ```
 

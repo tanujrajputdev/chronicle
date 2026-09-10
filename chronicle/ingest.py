@@ -2,6 +2,7 @@ import os, re, json, glob, html, datetime, collections, pathlib
 from .config import (SOURCE, GAP_SECONDS, MAX_USER_TEXT, MAX_ASST_TEXT,
                      MAX_BODY, load_aliases)
 from .redact import scrub
+from . import shellwrite
 
 MUTATORS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 # work continuing after the last prompt still belongs to the episode, but only for a while
@@ -246,6 +247,11 @@ def parse_session(path):
                             fp = inp.get("file_path") or inp.get("notebook_path")
                             sub = inp.get("subagent_type") if nm in AGENT_TOOLS else None
                             events.append((d, "tool", (nm, fp, sub)))
+                            if nm == "Bash":
+                                # a heredoc or redirect writes a file just as
+                                # really as Write does, and reports nothing
+                                for wp in shellwrite.targets(inp.get("command"), cwd):
+                                    events.append((d, "shellwrite", wp))
 
     events.sort(key=lambda e: e[0])
     return {
@@ -331,6 +337,8 @@ def segment(events, gap=GAP_SECONDS):
                 ep["cache_read"] += payload[1]
                 ep["in_tokens"] += payload[2]
                 ep["cache_write"] += payload[3]
+            elif kind == "shellwrite":
+                ep["files"].add(payload)
             elif kind == "tool":
                 nm, fp, sub = payload
                 ep["tools"][nm] += 1

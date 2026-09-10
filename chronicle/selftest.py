@@ -101,6 +101,26 @@ def build_corpus(root):
         fh.write(json.dumps({"type": "user"}) + "\n")
         fh.write(json.dumps({"type": "user", "timestamp": None, "message": None}) + "\n")
         fh.write(json.dumps({"type": "future_record_type", "timestamp": _ts(b, 3)}) + "\n")
+
+    # session E — work done entirely through the shell. Edit and Write are
+    # never called, so without shellwrite this episode has no files at all and
+    # lands in no project. The file must really exist: attribution is gated on
+    # it, so the corpus builds one.
+    work = os.path.join(root, "shellproj")
+    os.makedirs(work, exist_ok=True)
+    open(os.path.join(work, "shell-made.md"), "w").write("# written by a heredoc\n")
+    d5 = os.path.join(src, "-shellproj"); os.makedirs(d5, exist_ok=True)
+    rows = [
+        _user(_ts(b, 0), "write the launch notes into a markdown file", cwd=work),
+        _asst(_ts(b, 1), "Writing them.", [
+            ("Bash", {"command": "cat > shell-made.md <<'EOF'\n"
+                                 "# notes\n> a quoted line with a caret\n"
+                                 "echo nope > decoy-never-written.md\n"
+                                 "EOF",
+                      "description": "Write launch notes"})]),
+    ]
+    open(os.path.join(d5, "sess-e.jsonl"), "w").write(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
     return src
 
 
@@ -379,6 +399,55 @@ def run(verbose=False):
             assert "db.connect_ro" in src, "dashboard must open the index read-only"
             assert "db.connect()" not in src, "dashboard opened a writable connection"
         s.check("the dashboard cannot write to the index", dashboard_is_read_only)
+
+        def shell_writes_are_recovered():
+            """Bash writes files too, and reports no file_path when it does."""
+            from . import shellwrite
+            here = {"/w/notes.md", "/w/app.py", "/w/copy.md", "/w/t.txt"}
+            ex = lambda p: p in here
+
+            got = shellwrite.targets("cat > notes.md <<'EOF'\nhello\nEOF", "/w", ex)
+            assert got == ["/w/notes.md"], got
+            got = shellwrite.targets("sed -i '' 's/a/b/' app.py", "/w", ex)
+            assert got == ["/w/app.py"], got
+            got = shellwrite.targets("cp src.md copy.md", "/w", ex)
+            assert got == ["/w/copy.md"], got
+            got = shellwrite.targets("echo hi > t.txt", "/w", ex)
+            assert got == ["/w/t.txt"], got
+        s.check("bash heredocs, redirects and sed -i attribute their files",
+                shell_writes_are_recovered)
+
+        def heredoc_bodies_are_not_scanned():
+            """The body of a heredoc is prose, not shell. It is full of `>`.
+
+            Without stripping it first, a markdown blockquote becomes a file
+            path and the episode gets filed under a project called `The`."""
+            from . import shellwrite
+            cmd = ("cat > real.md <<'EOF'\n"
+                   "> quoted line\n"
+                   "if (a > b) { x = 1 }\n"
+                   "echo boom > /w/notafile.txt\n"
+                   "EOF")
+            got = shellwrite.targets(cmd, "/w", lambda p: True)
+            assert got == ["/w/real.md"], got
+            assert "/w/notafile.txt" not in got, "heredoc body was scanned as shell"
+
+            # and a path that does not exist is never attributed, however
+            # convincing the command looks
+            got = shellwrite.targets("cat > gone.md <<'EOF'\nx\nEOF",
+                                     "/w", lambda p: False)
+            assert got == [], got
+        s.check("heredoc bodies never become file paths", heredoc_bodies_are_not_scanned)
+
+        def shell_write_reaches_the_episode():
+            """End to end: a Bash heredoc puts a real file on the episode."""
+            rows = q("SELECT files_touched FROM episodes WHERE files_touched LIKE ?",
+                     ("%shell-made.md%",))
+            assert rows, "a file written by a Bash heredoc never reached an episode"
+            decoy = q("SELECT 1 FROM episodes WHERE files_touched LIKE ?",
+                      ("%decoy-never-written%",))
+            assert not decoy, "a path from inside the heredoc body was attributed"
+        s.check("a shell-written file lands on its episode", shell_write_reaches_the_episode)
 
         def checkpoint_scrubs_tasks():
             """Task text reaches disk and the next context; it needs the scrubber too."""
