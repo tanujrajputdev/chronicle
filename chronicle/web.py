@@ -506,7 +506,7 @@ def page_project(con, pid):
     row = con.execute("SELECT id,name FROM projects WHERE id=?", (pid,)).fetchone()
     if not row:
         # ids are lowercase slugs, display names are not — a hand-typed or
-        # copy-pasted /p/Nutristar should still land somewhere
+        # copy-pasted /p/MyProject should still land somewhere
         row = con.execute("SELECT id,name FROM projects WHERE id=? COLLATE NOCASE "
                           "OR name=? COLLATE NOCASE LIMIT 1", (pid, pid)).fetchone()
     if row:
