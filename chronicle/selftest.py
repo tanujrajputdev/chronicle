@@ -9,7 +9,7 @@ Two rules this file exists to enforce:
 Nothing here touches the real index, the real transcripts, or settings.json —
 every run happens inside a throwaway directory.
 """
-import os, sys, json, shutil, sqlite3, subprocess, tempfile, datetime, traceback
+import os, sys, json, time, shutil, sqlite3, subprocess, tempfile, datetime, traceback
 
 from .config import INSTALL_DIR
 
@@ -152,6 +152,50 @@ def run_cli(env, *args, expect_ok=True):
     if expect_ok:
         assert r.returncode == 0, f"`{' '.join(args)}` exited {r.returncode}\n{out[-300:]}"
     return out
+
+
+def run_hook_openpipe(env, event, payload, limit):
+    """Run a hook the way Claude Code sometimes does: write the payload and keep
+    the pipe open. `stdin.read()` blocks here forever — the hook must finish on
+    its own, well inside the timeout `install` writes into settings.json.
+
+    stdin is deliberately never closed, so `communicate()` cannot be used (it
+    closes it, which would release a blocked read and hide the very bug this
+    test exists to catch). Drain the output pipes on threads and wait instead.
+    """
+    import threading
+    p = subprocess.Popen([str(INSTALL_DIR / "chronicle-hook"), event],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True, env=env)
+    sink = {}
+    pumps = [threading.Thread(target=lambda k, f: sink.__setitem__(k, f.read()),
+                              args=(k, f), daemon=True)
+             for k, f in (("out", p.stdout), ("err", p.stderr))]
+    for t in pumps:
+        t.start()
+    t0 = time.monotonic()
+    try:
+        p.stdin.write(payload if isinstance(payload, str) else json.dumps(payload))
+        p.stdin.flush()                      # written — and the pipe stays open
+        try:
+            p.wait(timeout=limit)
+        except subprocess.TimeoutExpired:
+            raise AssertionError(
+                f"hook {event} still running after {limit}s with stdin held open — "
+                f"the session would stall and its output be discarded")
+        for t in pumps:
+            t.join(2)
+    finally:
+        if p.poll() is None:
+            p.kill()
+        for f in (p.stdin, p.stdout, p.stderr):
+            try:
+                f.close()
+            except Exception:
+                pass
+    assert p.returncode == 0, f"hook {event} exited {p.returncode}: {sink.get('err','')[-200:]}"
+    assert "Traceback" not in sink.get("err", ""), f"hook {event} raised:\n{sink.get('err','')[-300:]}"
+    return sink.get("out", ""), time.monotonic() - t0
 
 
 def run_hook(env, event, payload):
@@ -309,6 +353,38 @@ def run(verbose=False):
                             "user_input": "please make the button slightly larger on mobile screens"})
             assert not out.strip(), f"recall fired on a novel prompt: {out[:120]}"
         s.check("recall stays silent on novel work", recall_silent)
+
+        # ---- a hook must never wait on the writer closing stdin.
+        # This is what produced "UserPromptSubmit hook timed out after 30s —
+        # output discarded": the payload had arrived, and we were still blocked
+        # in read() waiting for an EOF that had not come yet.
+        from .hooks import BUDGET
+        transcript = os.path.join(src, "-Users-x-proj-a", "sess-a.jsonl")
+        held = {"session_id": "held", "cwd": "/Users/x/proj-a", "trigger": "startup",
+                "transcript_path": transcript, "user_input": "a" * 80}
+        for ev in ("sessionstart", "precompact", "sessionend", "userpromptsubmit"):
+            def open_pipe(ev=ev):
+                # cap the wait: a hang is the failure, and precompact's real
+                # budget is 7 minutes — no test should sit there to find out
+                limit = min(BUDGET[ev][1], 20.0)
+                _, took = run_hook_openpipe(env, ev, held, limit)
+                assert took < limit, f"took {took:.1f}s of a {limit}s budget"
+                return f"{took:.2f}s"
+            s.check(f"hook {ev}: finishes with stdin held open", open_pipe)
+
+        def held_garbage():
+            _, took = run_hook_openpipe(env, "userpromptsubmit", "not json", 6.0)
+            assert took < 6.0, f"unparseable payload held the session {took:.1f}s"
+            return f"{took:.2f}s"
+        s.check("hook gives up on an unparseable payload", held_garbage)
+
+        def brief_survives_open_pipe():
+            out, _ = run_hook_openpipe(env, "sessionstart",
+                                       {"session_id": "op", "cwd": "/Users/x/proj-a",
+                                        "trigger": "startup"}, 12.0)
+            assert "Chronicle" in json.loads(out or "{}").get("additionalContext", ""), \
+                "brief was lost when the writer held the pipe open"
+        s.check("brief still delivered with stdin held open", brief_survives_open_pipe)
 
         # ---- MCP
         def mcp():

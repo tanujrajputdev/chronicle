@@ -1,6 +1,6 @@
 """Claude Code hook handlers. These run inside the user's session — they must be
 fast, silent on success, and must never raise. Every path exits 0."""
-import os, sys, json, time, subprocess, datetime
+import os, sys, json, time, select, signal, subprocess, datetime
 from .config import ROOT, MEMORY_DIR
 from . import checkpoint
 
@@ -171,17 +171,89 @@ HANDLERS = {
 }
 
 
-def run(event):
+# Every hook gets two budgets: how long it may wait for the payload, and how long
+# the whole run may take. Both sit well under the timeout `install` writes into
+# settings.json, so the harness never has to kill us and never discards output.
+BUDGET = {
+    "userpromptsubmit": (1.5, 6.0),     # harness timeout 10s
+    "sessionstart":     (1.5, 12.0),    # harness timeout 20s
+    "sessionend":       (1.0, 3.0),     # harness timeout 5s
+    "precompact":       (3.0, 420.0),   # harness timeout 600s
+}
+
+
+def _read_payload(budget, event):
+    """Read the hook payload without ever waiting on EOF.
+
+    `sys.stdin.read()` returns only when the writer closes the pipe. Claude Code
+    writes the JSON and may hold the pipe open — and then the session stalls until
+    the harness kills us and throws the output away ("hook timed out after 30s").
+    JSON is self-delimiting, so stop as soon as the object parses, and give up
+    quietly at the deadline rather than blocking the user's prompt.
+    """
+    fd, buf = sys.stdin.fileno(), b""
+    deadline = time.monotonic() + budget
+    while True:
+        if buf.rstrip()[-1:] == b"}":          # cheap: only try to parse a plausible end
+            try:
+                return json.loads(buf.decode("utf-8", "replace"))
+            except Exception:
+                pass
+        left = deadline - time.monotonic()
+        if left <= 0:
+            _log(event, f"payload incomplete after {budget}s ({len(buf)}B) — proceeding without it")
+            return {}
+        try:
+            if not select.select([fd], [], [], left)[0]:
+                break
+            chunk = os.read(fd, 1 << 16)
+        except Exception:
+            break
+        if not chunk:                          # genuine EOF
+            break
+        buf += chunk
     try:
-        raw = sys.stdin.read()
-        payload = json.loads(raw) if raw.strip() else {}
+        return json.loads(buf.decode("utf-8", "replace")) if buf.strip() else {}
     except Exception:
-        payload = {}
+        return {}
+
+
+def _deadline(seconds):
+    """Bound the whole run. A hook that hangs for any reason — a lock, a huge
+    transcript, a filesystem stall — costs the user the same as one that crashes,
+    so time out ourselves instead of letting the session wait on us."""
+    def bail(signum, frame):
+        _log("watchdog", f"exceeded {seconds}s — exiting quietly")
+        os._exit(0)
     try:
-        out = HANDLERS.get(event.lower(), lambda p: {})(payload)
+        signal.signal(signal.SIGALRM, bail)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+    except Exception:
+        pass
+
+
+def _deadline_off():
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    except Exception:
+        pass
+
+
+def run(event):
+    ev = event.lower()
+    read_budget, total_budget = BUDGET.get(ev, (1.5, 10.0))
+    _deadline(total_budget)
+    payload = _read_payload(read_budget, ev)
+    try:
+        out = HANDLERS.get(ev, lambda p: {})(payload)
     except Exception as e:
         _log(event, f"ERROR {type(e).__name__}: {e}")
         out = {}
+    _deadline_off()
     if out:
-        sys.stdout.write(json.dumps(out))
+        try:
+            sys.stdout.write(json.dumps(out))
+            sys.stdout.flush()
+        except Exception:
+            pass
     return 0
