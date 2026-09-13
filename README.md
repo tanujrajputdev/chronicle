@@ -342,7 +342,7 @@ Measured against 500 MB of real transcripts, 125 episodes, 221 agent runs:
 | Pre-compaction checkpoint, 80 MB transcript | 2.4 s |
 | Index size | 11 MB |
 
-About 3,000 lines of Python, standard library only.
+About 4,800 lines of Python, standard library only.
 
 ---
 
