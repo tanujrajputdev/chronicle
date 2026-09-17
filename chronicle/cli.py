@@ -406,10 +406,34 @@ def cmd_map(con, a):
 
 
 def cmd_why(con, a):
-    from . import recall
+    """Explain the prompt path exactly as the hook would run it: a prompt that asks
+    about the past takes the lookup route, anything else takes repeat-work recall."""
+    from . import recall, brief
     text = " ".join(a.text)
+    if recall.intent_of(text):
+        pid = brief.project_for_cwd(con, os.getcwd())
+        hits, trace = recall.lookup(con, text, cwd_project=pid, explain=True)
+        _rule("Would Chronicle answer this?")
+        print(f"  {C}✓{R} reads as a question about past work "
+              f"{D}— taking the lookup path, from {pid or 'no known project'}{R}\n")
+        for k, v in trace:
+            mark = G + "✓" + R if v.startswith("MATCH") else (D + "·" + R)
+            print(f"  {mark} {k:<22} {v}")
+        print()
+        if hits:
+            print(f"  {G}fires{R} — this is what would be injected:\n")
+            print(recall.render_lookup(hits))
+        else:
+            print(f"  {D}stays silent{R}")
+        print(f"\n  {D}gates: >={recall.MIN_LOOKUP_TERMS} things named · one episode must "
+              f"contain the 3 rarest of them, or failing that the 2 rarest · "
+              f"<={recall.MAX_LOOKUP_HITS} shown{R}")
+        return
+
     hits, trace = recall.find(con, text, explain=True)
     _rule("Would recall fire?")
+    print(f"  {D}· does not read as a question about past work — taking the "
+          f"repeat-work path{R}\n")
     for k, v in trace:
         mark = G + "✓" + R if v.startswith("MATCH") else (D + "·" + R)
         print(f"  {mark} {k:<22} {v}")

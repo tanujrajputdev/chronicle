@@ -121,6 +121,45 @@ def build_corpus(root):
     ]
     open(os.path.join(d5, "sess-e.jsonl"), "w").write(
         "\n".join(json.dumps(r) for r in rows) + "\n")
+
+    # session F — a project with real history. The prompt path refuses to answer
+    # a corpus under ten episodes, so without this every recall test would pass
+    # for the wrong reason. Written the way people actually write: three-letter
+    # acronyms nobody spells out, SQL keywords shouted mid-sentence, and one
+    # genuinely rare vendor name that a question can reach for.
+    d6 = os.path.join(src, "-Users-x-proj-e"); os.makedirs(d6, exist_ok=True)
+    rows, cwd_e = [], "/Users/x/proj-e"
+    script = [
+        "set up the CRM inventory sync so every SKU lands in one stock dashboard table",
+        "the CRM dashboard needs a vendor page - start with the Brightwell account",
+        "export a CSV of every SKU we hold for Brightwell, grouped by warehouse",
+        "the stock query should filter WHERE active = 1 AND archived IS NOT NULL",
+        "add reorder thresholds to the SKU table and surface them on the CRM dashboard",
+        # `crm` in lower case here on purpose: the term counts must pick it up in
+        # episodes that never shouted it, which only works if the second pass
+        # re-reads the corpus instead of reusing what the first pass capitalised
+        "the CSV export drops stock rows when a SKU has no vendor - fix the crm join",
+        "write the weekly stock digest as markdown, one dashboard section per warehouse AND vendor",
+        "the dashboard chart should show thirty days of stock movement, NOT ninety",
+    ]
+    for i, text in enumerate(script):
+        rows.append(_user(_ts(b, i * 300), text, cwd_e))          # 5h apart: one episode each
+        rows.append(_asst(_ts(b, i * 300 + 2), "Done.",
+                          [("Edit", {"file_path": f"/Users/x/proj-e/stock_{i}.py"})]))
+    open(os.path.join(d6, "sess-f.jsonl"), "w").write(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
+
+    # session G — the same subject, filed under a different project id. This is
+    # the shape that makes people give up and search by hand: you are sitting in
+    # one project and the work you are asking about was recorded in another.
+    d7 = os.path.join(src, "-Users-x-proj-f"); os.makedirs(d7, exist_ok=True)
+    rows = [
+        _user(_ts(b, 30), "reconcile the Brightwell vendor invoices against the SKU ledger",
+              "/Users/x/proj-f"),
+        _asst(_ts(b, 32), "Reconciled.", [("Edit", {"file_path": "/Users/x/proj-f/ledger.py"})]),
+    ]
+    open(os.path.join(d7, "sess-g.jsonl"), "w").write(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
     return src
 
 
@@ -353,6 +392,106 @@ def run(verbose=False):
                             "user_input": "please make the button slightly larger on mobile screens"})
             assert not out.strip(), f"recall fired on a novel prompt: {out[:120]}"
         s.check("recall stays silent on novel work", recall_silent)
+
+        # ---- the vocabulary a three-letter corpus needs
+        def acronyms_are_learned():
+            """A short word earns a place in the vocabulary by being one the corpus
+            writes in capitals. That is the whole test: `crm` is an acronym, `and`
+            is a function word that happens to get shouted in SQL."""
+            got = {r["term"] for r in q("SELECT term FROM acronyms")}
+            for w in ("crm", "sku", "csv"):
+                assert w in got, f"{w!r} is written in capitals all over the corpus " \
+                                 f"but was not learned: {sorted(got)}"
+            for w in ("and", "not", "the", "was"):
+                assert w not in got, f"{w!r} is a function word, not an acronym: {sorted(got)}"
+            return f"{len(got)} learned"
+        s.check("short acronyms are learned, shouted function words are not", acronyms_are_learned)
+
+        def acronyms_reach_the_term_counts():
+            """The allowlist buys nothing if the term counts cannot see it. `crm` is
+            capitalised in three episodes and lower-case in a fourth, so a count of
+            three would mean the second pass reused the first pass's capitals
+            instead of re-reading the corpus."""
+            row = q("SELECT df FROM terms WHERE term='crm'")
+            assert row, "`crm` never reached the term table at all"
+            shouted = q("SELECT df FROM acronyms WHERE term='crm'")[0]["df"]
+            assert row[0]["df"] > shouted, \
+                f"crm counted in {row[0]['df']} episodes but shouted in {shouted} — " \
+                f"the lower-case use was missed"
+            return f"df {row[0]['df']}, shouted in {shouted}"
+        s.check("an acronym is counted wherever it appears, not only where shouted",
+                acronyms_reach_the_term_counts)
+
+        # ---- lookup: the user asked about the past
+        def intent_reads_the_question():
+            """Pure text, no index — which prompts are asking about past work."""
+            from .recall import intent_of
+            for t in ("what did we decide about the CRM?", "have we already shipped this?",
+                      "use chronicle to find the vendor export", "last time we tried this it broke",
+                      "did we ever finish the SKU table", "i think we had built this previously"):
+                assert intent_of(t), f"missed a question about the past: {t!r}"
+            for t in ("make the button larger on mobile", "add a new column to the vendor export",
+                      "deploy this and watch the logs",
+                      # an instruction, not a question — the trap the word invites
+                      "remember to add the utm parameters to every campaign link",
+                      # and the everyday second sense of every weak trigger: with
+                      # nobody in the sentence, these are adjectives, not questions
+                      "add a previously-unsupported flag to the parser",
+                      "write a migration that backfills the earlier records",
+                      "add a forgotten-password flow to the login screen"):
+                assert not intent_of(t), f"read an ordinary instruction as a question: {t!r}"
+        s.check("intent tells a question about the past from an instruction",
+                intent_reads_the_question)
+
+        def lookup_answers_a_question():
+            out = run_hook(env, "userpromptsubmit",
+                           {"session_id": "lk1", "cwd": "/Users/x/proj-e",
+                            "user_input": "what did we do about the Brightwell vendor CSV export?"})
+            assert out.strip(), "stayed silent on a direct question about past work"
+            ctx = json.loads(out).get("additionalContext", "")
+            assert "asked about past work" in ctx, f"took the repeat-work path instead: {ctx[:150]}"
+            assert "brightwell" in ctx.lower(), f"found nothing about Brightwell: {ctx[:200]}"
+        s.check("lookup answers a question about past work", lookup_answers_a_question)
+
+        def lookup_crosses_projects():
+            """Sitting in one project, asking about work recorded in another. This
+            is the case that sends people back to searching by hand."""
+            out = run_hook(env, "userpromptsubmit",
+                           {"session_id": "lk2", "cwd": "/Users/x/proj-e",
+                            "user_input": "have we reconciled the Brightwell invoices "
+                                          "against the ledger?"})
+            ctx = json.loads(out or "{}").get("additionalContext", "")
+            assert "proj-f" in ctx, f"never crossed into the project that holds it: {ctx[:200]}"
+        s.check("lookup finds work filed under another project", lookup_crosses_projects)
+
+        def lookup_needs_something_to_look_for():
+            """"What did we do?" names nothing. The session brief already answers
+            that, and guessing here would be noise."""
+            out = run_hook(env, "userpromptsubmit",
+                           {"session_id": "lk3", "cwd": "/Users/x/proj-e",
+                            "user_input": "hey so what did we do?"})
+            assert not out.strip(), f"spoke without being given anything to find: {out[:120]}"
+        s.check("lookup stays silent when the question names nothing",
+                lookup_needs_something_to_look_for)
+
+        def lookup_needs_a_rare_word():
+            """Every word here is everywhere in this corpus. ANDing them together
+            still matches most of it, so the question has not really named anything."""
+            out = run_hook(env, "userpromptsubmit",
+                           {"session_id": "lk4", "cwd": "/Users/x/proj-e",
+                            "user_input": "what have we done about the stock dashboard?"})
+            assert not out.strip(), f"answered a question that named nothing rare: {out[:150]}"
+        s.check("lookup stays silent when nothing named is distinctive",
+                lookup_needs_a_rare_word)
+
+        def lookup_never_repeats_itself():
+            payload = {"session_id": "lk5", "cwd": "/Users/x/proj-e",
+                       "user_input": "what did we do about the Brightwell vendor CSV export?"}
+            assert run_hook(env, "userpromptsubmit", payload).strip(), "no answer the first time"
+            again = run_hook(env, "userpromptsubmit", payload)
+            assert not again.strip(), f"offered the same episode twice: {again[:120]}"
+        s.check("lookup does not offer the same episode twice in a session",
+                lookup_never_repeats_itself)
 
         # ---- a hook must never wait on the writer closing stdin.
         # This is what produced "UserPromptSubmit hook timed out after 30s —

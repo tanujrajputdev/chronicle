@@ -178,7 +178,9 @@ Chronicle attributes a project from **the files an episode actually edits**, not
 
 ### 4. Silence is the correct default
 
-The repeat-work check runs on every prompt, so a false positive is a tax on your attention. It clears five gates before it says anything:
+Two different questions get answered on the prompt path, and they are deliberately kept apart. Collapsing them into one mechanism is how you end up with something that either never fires or fires constantly.
+
+**"You have worked on this before"** is an interruption you never asked for, so it clears five gates before it says anything:
 
 | Gate | Requirement |
 |---|---|
@@ -188,7 +190,21 @@ The repeat-work check runs on every prompt, so a false positive is a tax on your
 | Rarity | ≥ 3 of the shared words are genuinely rare (df ≤ 6%) |
 | Size-normalised score | ≥ 0.030, so sprawling episodes stop matching everything |
 
-Replayed against all 1,136 prompts in the reference history it fired **4 times**, and every one was correct. You can audit any decision it makes:
+Replayed against all 1,136 prompts in the reference history it fired **4 times**, and every one was correct.
+
+**"You just asked about the past"** is a different question, and those gates are the wrong test for it — a question is not a restatement of the work, so it fails the coverage test almost every time. When a prompt reads as a question about your own history (*have we*, *what did we*, *last time*, *use chronicle*), it gets a search instead:
+
+| Gate | Requirement |
+|---|---|
+| Phrasing | Reads as a question about past work, not an instruction — `remember to…` is an instruction |
+| Names something | ≥ 2 content words, once the asking-vocabulary (`find`, `decided`, `chronicle`) is removed |
+| Distinctive | At least one of them is rare across your own history (df ≤ 20%) |
+| Finds something | One episode contains the 3 rarest of them — or, failing that, the 2 rarest |
+| Budget | ≤ 3 answers per session, and never the same episode twice |
+
+Ranking prefers episodes that were *about* what you named — the title and opening prompt outweigh a passing mention in the body. Hits in your current project sort first, but other projects are **not** excluded: the same work is routinely filed under two project ids, and that is precisely the case you cannot find by hand.
+
+You can audit either decision:
 
 ```
 $ chronicle why "fix the button colour"
@@ -222,7 +238,7 @@ One SQLite file at `~/.chronicle/chronicle.db` — 11 MB for 500 MB of transcrip
 |---|---|
 | `index [--rebuild]` | Ingest new or changed sessions. Incremental and idempotent. |
 | `doctor` | Check *this* install: environment, index, hooks, MCP, redaction. 24 checks. |
-| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 70 checks. |
+| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 78 checks. |
 | `stats` | Corpus overview. |
 | `tokens [--by project\|day\|month]` | Every token spent, split into input, cache write, cache read and output. |
 | `projects` | Every project, most recently worked first. |
@@ -236,7 +252,7 @@ One SQLite file at `~/.chronicle/chronicle.db` — 11 MB for 500 MB of transcrip
 | `brief [project]` | What a new session here is told automatically. |
 | `recall [session]` | The last pre-compaction checkpoint, in full. |
 | `checkpoints` | Every checkpoint saved so far. |
-| `why "<text>"` | Would the repeat-work check fire? Which gate stopped it? |
+| `why "<text>"` | Would either prompt-path check fire for this? Which gate stopped it? |
 | `report [project] --since 7d` | A work log you can send someone. |
 | `digest` | Regenerate `projects/<name>/DIGEST.md` and `MEMORY.md`. |
 | `serve [-p 7777]` | Local dashboard. |
@@ -253,7 +269,7 @@ A dashboard is somewhere you have to remember to go. These arrive on their own.
 | `SessionStart` | Every session | Injects a project brief: last session, how it ended, open tasks, files in flight. ~1,200 characters. |
 | `PreCompact` | Before context is compressed | Saves your prompts verbatim, the open task list and files in flight — then `SessionStart` feeds them back into the fresh context. |
 | `SessionEnd` | On exit | Re-indexes and regenerates digests in the background. |
-| `UserPromptSubmit` | Every prompt | Debounced re-index, plus the repeat-work check. Costs 3 ms. |
+| `UserPromptSubmit` | Every prompt | Debounced re-index, plus the repeat-work check — or, if the prompt asks about past work, a lookup. Costs 3 ms. |
 
 A launchd job also re-indexes every 30 minutes, so nothing depends on a hook firing.
 
@@ -314,7 +330,7 @@ Then `./chronicle-cli index --rebuild`. Run `chronicle map --cross` to find dire
 | `CHRONICLE_MEMORY` | the install dir | Where `aliases.json` and generated digests live |
 | `CHRONICLE_PYTHON` | auto | Force a specific interpreter |
 | `CHRONICLE_NO_BRIEF` | unset | Disable the session-start brief |
-| `CHRONICLE_NO_RECALL` | unset | Disable the repeat-work check |
+| `CHRONICLE_NO_RECALL` | unset | Disable both prompt-path checks |
 
 ---
 
@@ -363,7 +379,8 @@ They are not really competitors — they solve a different problem. If you want 
 ## Limitations
 
 - **The 30-minute background re-index is macOS only** (launchd). The hooks work everywhere and cover the same ground; you lose the belt-and-braces refresh.
-- **The repeat-work check is near-silent by design.** 4 fires in 1,136 prompts. Yield grows with your history — with a small corpus most domain vocabulary is too common to count as distinctive.
+- **The repeat-work check is near-silent by design.** 4 fires in 1,136 prompts. Yield grows with your history — with a small corpus most domain vocabulary is too common to count as distinctive. Asking outright (*what did we do about X*) takes the lookup path instead, which is far less shy.
+- **Lookup only finds what you name.** It searches words, not meaning: ask about "the thing we discussed last week" and it has nothing to search for, and it will stay silent rather than guess.
 - **The JSONL format is undocumented** and can change with a Claude Code release. The parser is defensive and fails soft, but a release could still break indexing.
 - **Episode titles are heuristic**, taken from your first substantive prompt. Recognisable, not elegant.
 - **Tested on macOS with Python 3.11 and 3.13.** Linux should work. Windows is untested.
@@ -381,7 +398,7 @@ Issues and pull requests welcome. Two rules that are not negotiable:
 Before opening a PR:
 
 ```bash
-chronicle selftest                        # 70 checks, ~7s, sandboxed
+chronicle selftest                        # 78 checks, ~16s, sandboxed
 python3.11 -m py_compile chronicle/*.py   # the supported floor
 ```
 

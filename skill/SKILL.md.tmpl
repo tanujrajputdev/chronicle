@@ -24,7 +24,7 @@ These are absolute paths — run them from wherever the user is; no `cd` needed:
 {{CHRONICLE_DIR}}/chronicle-cli map [--cross]              # where work launched in one folder actually landed
 {{CHRONICLE_DIR}}/chronicle-cli serve                      # local dashboard at 127.0.0.1:7777
 {{CHRONICLE_DIR}}/chronicle-cli brief [project]            # what a new session here is told automatically
-{{CHRONICLE_DIR}}/chronicle-cli why "<text>"               # would recall fire for this? which gate stopped it?
+{{CHRONICLE_DIR}}/chronicle-cli why "<text>"               # would either prompt-path check fire? which gate stopped it?
 {{CHRONICLE_DIR}}/chronicle-cli report <project> --since 7d  # a work log you can send to a client
 {{CHRONICLE_DIR}}/chronicle-cli index                      # pick up anything new (incremental, seconds)
 {{CHRONICLE_DIR}}/chronicle-cli recall [session]           # the last pre-compaction checkpoint, in full
@@ -69,6 +69,18 @@ the user just asked. It is deliberately near-silent — roughly one prompt in 25
 does fire, take it seriously: open the episode and say what was concluded before, rather than
 starting the work again. It never loads anything by itself. If a match looks wrong, say so;
 `chronicle why "<text>"` shows exactly which gates it passed.
+
+## When Chronicle says "you asked about past work"
+
+The same hook injects candidate episodes whenever the user's prompt reads as a question about
+their own history — "have we", "what did we", "last time". This is *not* the near-silent path:
+they asked, so treat the injection as a lead to follow, not a suggestion to check with them
+first. Open the ones that look relevant (`chronicle show <id>`) and answer from what you find.
+They are candidates, not an answer — if none of them fits, say so plainly and carry on with
+the work rather than forcing them in.
+
+Note that a hit from a *different* project is not a mistake. The same work is often filed under
+two project ids, and crossing that line is most of the value.
 
 Episode ids are permanent. `#107` today is `#107` next month, so it is safe to write one down
 or quote it back to the user.

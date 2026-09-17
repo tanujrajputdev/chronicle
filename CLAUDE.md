@@ -13,7 +13,7 @@ milliseconds.
 |---|---|
 | `chronicle/ingest.py` | Streaming JSONL parser and the episode segmenter |
 | `chronicle/indexer.py` | Builds the index; owns project attribution and stable ids |
-| `chronicle/recall.py` | Repeat-work matching, plus the term statistics behind it |
+| `chronicle/recall.py` | Both prompt-path answers — repeat-work matching and retrieval lookup — plus the term statistics behind them |
 | `chronicle/checkpoint.py` | Pre-compaction rescue |
 | `chronicle/brief.py` | The session-start catch-up |
 | `chronicle/hooks.py` | Claude Code hook handlers — must be fast and must never raise |
@@ -36,7 +36,7 @@ milliseconds.
 ## Checking a change
 
 ```bash
-chronicle selftest                         # 70 checks against a synthetic corpus, ~7s
+chronicle selftest                         # 78 checks against a synthetic corpus, ~16s
 python3.11 -m py_compile chronicle/*.py    # the supported floor
 chronicle doctor                           # is this machine's install wired up
 ```

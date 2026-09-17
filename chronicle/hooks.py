@@ -118,6 +118,7 @@ def session_end(p):
 
 
 MAX_RECALL_PER_SESSION = 2
+MAX_LOOKUP_PER_SESSION = 3
 
 
 def user_prompt_submit(p):
@@ -130,10 +131,52 @@ def user_prompt_submit(p):
     if os.environ.get("CHRONICLE_NO_RECALL"):
         return {}
     try:
+        from . import recall
+        # Only ever one of the two speaks, and an explicit question about the past
+        # outranks an inferred resemblance to it. The budget being spent here is
+        # the user's attention, not tokens.
+        if recall.intent_of(p.get("user_input") or ""):
+            return _lookup(p, st)
         return _recall(p, st)
     except Exception as e:
         _log("UserPromptSubmit", f"recall ERROR {type(e).__name__}: {e}")
         return {}
+
+
+def _lookup(p, st):
+    """The user asked about their own past work — so answer, rather than waiting to
+    be asked a second time with the word "chronicle" in it."""
+    sid = p.get("session_id", "")
+    box = st.setdefault("lookup", {}).setdefault(sid, {"n": 0, "ids": []})
+    if box["n"] >= MAX_LOOKUP_PER_SESSION:
+        return {}
+    from . import db, brief, recall
+    try:
+        con = db.connect_ro()
+        pid = brief.project_for_cwd(con, p.get("cwd"))
+        hits = recall.lookup(con, p.get("user_input") or "",
+                             cwd_project=pid, exclude_session=sid)
+    except Exception:
+        return {}          # index busy or missing: stay out of the way
+    fresh = [h for h in hits if h["id"] not in box["ids"]]
+    if not fresh:
+        # logged even when empty: a retrieval question that found nothing is the
+        # one signal worth having when tuning this, and nothing else records it.
+        # Which kind of empty it was matters — "found nothing" and "found only
+        # what I already said" call for different fixes.
+        _log("UserPromptSubmit", "intent, already shown" if hits else "intent, no match")
+        return {}
+    hits = fresh
+    box["n"] += 1
+    box["ids"].extend(h["id"] for h in hits)
+    st["lookup"] = {sid: box}          # only track the live session
+    _save_state(st)
+    out = recall.render_lookup(hits)
+    _log("UserPromptSubmit", "intent " + ", ".join(
+        f"#{h['id']}({h['project']})" for h in hits))
+    return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                   "additionalContext": out},
+            "additionalContext": out}
 
 
 def _recall(p, st):
