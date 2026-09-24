@@ -56,7 +56,8 @@ def build_corpus(root):
         _asst(_ts(b, 11), "Done.", [("Edit", {"file_path": "/Users/x/proj-b/dashboard.tsx"})]),
         # 6 hours later -> a second episode
         _user(_ts(b, 370), "the recurring billing cron is firing twice, please investigate"),
-        _asst(_ts(b, 371), "Found it.", [("Edit", {"file_path": "/Users/x/proj-a/cron.py"})]),
+        _asst(_ts(b, 371), "Found it.", [("Edit", {"file_path": "/Users/x/proj-a/cron.py"}),
+                                          ("Skill", {"skill": "ripwire-find-bug"})]),
         # harness machinery must not create an episode or become a title
         {"type": "user", "timestamp": _ts(b, 1200),
          "message": {"role": "user", "content": "<task-notification>\n<task-id>abc</task-id>\n</task-notification>"}},
@@ -83,7 +84,9 @@ def build_corpus(root):
          "message": {"role": "user", "content": "Investigate the deployment pipeline thoroughly"}},
         {"type": "assistant", "timestamp": _ts(b, 8), "isSidechain": True,
          "message": {"role": "assistant", "usage": {"output_tokens": 500},
-                     "content": [{"type": "text", "text": "The pipeline uses blue-green deploys."}]}},
+                     "content": [{"type": "text", "text": "The pipeline uses blue-green deploys."},
+                                 {"type": "tool_use", "id": "t1", "name": "Bash",
+                                  "input": {"command": "kubectl get pods"}}]}},
     ]
     open(os.path.join(sub, "agent-1.jsonl"), "w").write(
         "\n".join(json.dumps(r) for r in arows) + "\n")
@@ -159,6 +162,48 @@ def build_corpus(root):
         _asst(_ts(b, 32), "Reconciled.", [("Edit", {"file_path": "/Users/x/proj-f/ledger.py"})]),
     ]
     open(os.path.join(d7, "sess-g.jsonl"), "w").write(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
+
+    # session H — a slash command with no other prompt at all. MACHINERY_RX
+    # keeps it out of segment()'s episode bounds, so without the command-only
+    # fallback in indexer.build this session would produce zero episodes and
+    # the command tally would be dropped on the floor.
+    d8 = os.path.join(src, "-Users-x-proj-g"); os.makedirs(d8, exist_ok=True)
+    rows = [
+        _user(_ts(b, 0),
+              "<command-message>graphify is running</command-message>\n"
+              "<command-name>/graphify</command-name>\n"
+              "<command-args></command-args>",
+              "/Users/x/proj-g"),
+    ]
+    open(os.path.join(d8, "sess-h.jsonl"), "w").write(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
+
+    # sessions I/J — the issue #1 repro: two projects under a container name
+    # ("workspaces") that CONTAINERS does not know about, so file_root()
+    # truncates both down to the same shallow "/Users/x/workspaces" bucket.
+    # Session J's own cwd is proj-b's real root, so once fold_known_roots()
+    # runs, session I's cross-repo edit to a file under proj-b should resolve
+    # to proj-b directly -- zero aliases.json entries required.
+    d9 = os.path.join(src, "-Users-x-workspaces-proj-a"); os.makedirs(d9, exist_ok=True)
+    rows = [
+        _user(_ts(b, 0), "wire proj-a's client against the shared proj-b helper",
+              "/Users/x/workspaces/proj-a"),
+        _asst(_ts(b, 1), "Done.", [
+            ("Edit", {"file_path": "/Users/x/workspaces/proj-a/client.py"}),
+            ("Edit", {"file_path": "/Users/x/workspaces/proj-b/shared.py"})]),
+    ]
+    open(os.path.join(d9, "sess-i.jsonl"), "w").write(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
+
+    d10 = os.path.join(src, "-Users-x-workspaces-proj-b"); os.makedirs(d10, exist_ok=True)
+    rows = [
+        _user(_ts(b, 0), "add a health check to proj-b's shared helper",
+              "/Users/x/workspaces/proj-b"),
+        _asst(_ts(b, 1), "Added.", [
+            ("Edit", {"file_path": "/Users/x/workspaces/proj-b/shared.py"})]),
+    ]
+    open(os.path.join(d10, "sess-j.jsonl"), "w").write(
         "\n".join(json.dumps(r) for r in rows) + "\n")
     return src
 
@@ -296,12 +341,50 @@ def run(verbose=False):
             assert any("proj-b" in x for x in roots), f"cross-repo edit lost: {roots}"
         s.check("work is attributed to the repo it edited", cross)
 
+        def known_root_cross_project():
+            rows = q(
+                "SELECT ep.project_id, ep.root FROM episode_projects ep "
+                "JOIN episodes e ON e.id = ep.episode_id "
+                "WHERE ep.source='files' AND e.session_id='sess-i'")
+            shared = [r for r in rows if "proj-b/shared.py" in r["root"]]
+            assert shared, f"cross-repo file row missing entirely: {rows}"
+            assert all(r["project_id"] == "proj-b" for r in shared), (
+                f"cross-repo file wasn't folded to its known cwd root: {shared}")
+            assert not any(r["project_id"] == "workspaces" for r in rows), (
+                f"a file collapsed into the shared truncated bucket instead of "
+                f"its real project: {rows}")
+        s.check("known session cwd wins over file_root() truncation, no aliases needed",
+                known_root_cross_project)
+
         def agent():
             rows = q("SELECT prompt, result FROM agent_runs")
             assert len(rows) == 1, f"expected 1 agent run, got {len(rows)}"
             assert "deployment pipeline" in rows[0]["prompt"], "agent prompt lost"
             assert "blue-green" in rows[0]["result"], "agent conclusion lost"
         s.check("subagent transcripts are captured", agent)
+
+        def skill_counted_once():
+            row = q("SELECT tools FROM episodes WHERE session_id='sess-a' AND seq=2")[0]
+            tools = json.loads(row["tools"] or "{}")
+            assert tools.get("skill:ripwire-find-bug") == 1, f"skill call not tallied: {tools}"
+            assert "Skill" not in tools, f"skill call double-counted under the bare name: {tools}"
+        s.check("a Skill call is tallied once, not twice", skill_counted_once)
+
+        def sub_merge_updates_n_tools():
+            row = q("SELECT tools, n_tools FROM episodes WHERE session_id='sess-b'")[0]
+            tools = json.loads(row["tools"] or "{}")
+            assert tools.get("sub:Bash") == 1, f"subagent tool call not merged: {tools}"
+            assert row["n_tools"] == sum(tools.values()), (
+                f"n_tools ({row['n_tools']}) drifted from the merged tools tally "
+                f"({sum(tools.values())})")
+        s.check("a subagent's tools merge in and n_tools stays consistent", sub_merge_updates_n_tools)
+
+        def command_only_session():
+            rows = q("SELECT tools FROM episodes WHERE session_id='sess-h'")
+            assert rows, "a command-only session produced no episode at all"
+            tools = json.loads(rows[0]["tools"] or "{}")
+            assert tools.get("cmd:/graphify") == 1, f"slash command not tallied: {tools}"
+        s.check("a command-only session still tallies its slash command", command_only_session)
 
         def compaction():
             n = q("SELECT SUM(compactions) n FROM episodes")[0]["n"] or 0
@@ -330,6 +413,22 @@ def run(verbose=False):
             moved = {k: (before[k], after[k]) for k in before if k in after and before[k] != after[k]}
             assert not moved, f"episode ids moved across rebuild: {moved}"
         s.check("ids survive a rebuild", stable)
+
+        def reindex_keeps_attribution():
+            # a live session grows, so its file is re-read by a plain index
+            sql = "SELECT episode_id, project_id, source, n_files, root FROM episode_projects"
+            before = sorted(map(tuple, q(sql)))
+            folded = q("SELECT COUNT(*) n FROM episode_projects WHERE source='files'")[0]["n"]
+            assert folded, "corpus has no file attribution to re-index"
+            for dirpath, _, names in os.walk(src):
+                for n in names:
+                    if n.endswith(".jsonl") and "subagents" not in dirpath:
+                        with open(os.path.join(dirpath, n), "a") as fh:
+                            fh.write(json.dumps({"type": "file-history-snapshot"}) + "\n")
+            run_cli(env, "index")
+            after = sorted(map(tuple, q(sql)))
+            assert after == before, f"attribution changed on re-index: {set(before) ^ set(after)}"
+        s.check("re-indexing a grown session keeps its attribution", reindex_keeps_attribution)
 
         # ---- every subcommand runs
         def _first(sql, what):
@@ -674,6 +773,271 @@ def run(verbose=False):
             assert "hunter2secret" not in out["description"], out["description"]
             assert out["status"] == "pending", "scrubbing dropped a field"
         s.check("checkpoints redact task text as well as prompts", checkpoint_scrubs_tasks)
+
+        def custom_containers_configure():
+            """A `containers` list in aliases.json overrides the hardcoded
+            default, so file_root() can resolve a container name (e.g. a
+            machine-specific folder like `oss-repos`) the built-in guess
+            would never know about."""
+            import pathlib
+            from . import config, ingest
+            tmp = tempfile.mkdtemp(prefix="chronicle-containers-")
+            try:
+                pathlib.Path(tmp, "aliases.json").write_text(
+                    json.dumps({"containers": ["weirdcontainer"]}))
+                saved = config.ALIASES_PATH
+                config.ALIASES_PATH = pathlib.Path(tmp, "aliases.json")
+                try:
+                    got = config.load_containers()
+                    assert "weirdcontainer" in got, f"custom containers not loaded: {got}"
+                    assert "dev" not in got, \
+                        "a configured containers list should replace the default, not extend it"
+                    root = ingest.file_root("/Users/x/weirdcontainer/proj-z/main.py")
+                    assert root == "/Users/x/weirdcontainer/proj-z", \
+                        f"a container name outside the hardcoded default failed to resolve: {root}"
+                finally:
+                    config.ALIASES_PATH = saved
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        s.check("a configured `containers` entry resolves a container name the default misses",
+                custom_containers_configure)
+
+        # ---- cross-project resolution interaction matrix (mechanisms 1-3)
+        aliases_path = os.path.join(env["CHRONICLE_MEMORY"], "aliases.json")
+
+        def _reindex_with_aliases(data):
+            """Swap aliases.json for `data` (None removes it) and rebuild.
+            Shared by the interaction-matrix checks below; each restores the
+            no-alias baseline in its own finally block."""
+            if data is None:
+                if os.path.exists(aliases_path):
+                    os.remove(aliases_path)
+            else:
+                with open(aliases_path, "w") as fh:
+                    json.dump(data, fh)
+            run_cli(env, "index", "--rebuild")
+
+        def known_root_beats_conflicting_alias():
+            """Mechanism 1 (a known session cwd) outranks mechanism 2 (an
+            aliases.json entry) for the very same file — reality over
+            user-maintained config that can go stale.
+
+            The alias key must sit *deeper* than the owning session's own
+            cwd (not equal to it): an alias equal to the cwd itself would
+            also redirect the session's own resolution (out of scope, see
+            spec section 3), which would make mechanism 1 and mechanism 2
+            agree instead of conflict."""
+            bp = datetime.datetime(2026, 1, 10, 9, 0)
+            owner_dir = os.path.join(src, "-Users-x-knownroot-proj-kr")
+            os.makedirs(owner_dir, exist_ok=True)
+            open(os.path.join(owner_dir, "sess-knownroot-owner.jsonl"), "w").write(
+                json.dumps(_user(_ts(bp, 0), "own the proj-kr project",
+                                 "/Users/x/knownroot/proj-kr")) + "\n")
+            toucher_dir = os.path.join(src, "-Users-x-knownroot-toucher")
+            os.makedirs(toucher_dir, exist_ok=True)
+            rows = [
+                _user(_ts(bp, 30), "patch proj-kr's vendored module from elsewhere",
+                      "/Users/x/knownroot-toucher"),
+                _asst(_ts(bp, 31), "Patched.", [
+                    ("Edit", {"file_path":
+                        "/Users/x/knownroot/proj-kr/vendor/module.py"})]),
+            ]
+            open(os.path.join(toucher_dir, "sess-knownroot-toucher.jsonl"), "w").write(
+                "\n".join(json.dumps(r) for r in rows) + "\n")
+            try:
+                _reindex_with_aliases({"projects": {
+                    "/Users/x/knownroot/proj-kr/vendor": "hostile-alias"}})
+                owner_pid = q(
+                    "SELECT project_id FROM sessions WHERE id='sess-knownroot-owner'"
+                )[0]["project_id"]
+                assert owner_pid != "hostile-alias", (
+                    "test setup error: the alias reached the owner's own cwd too")
+                rows = q(
+                    "SELECT project_id FROM episode_projects WHERE source='files' "
+                    "AND root LIKE '%proj-kr%'")
+                assert rows, f"cross-repo file row missing entirely: {rows}"
+                assert all(r["project_id"] == owner_pid for r in rows), (
+                    f"a conflicting alias beat the known cwd root: {rows}")
+            finally:
+                _reindex_with_aliases(None)
+                shutil.rmtree(owner_dir, ignore_errors=True)
+                shutil.rmtree(toucher_dir, ignore_errors=True)
+        s.check("known cwd root wins over a conflicting aliases.json entry",
+                known_root_beats_conflicting_alias)
+
+        def alias_fires_for_never_indexed_project():
+            """Mechanism 2 still works for a file under a project chronicle
+            has never indexed any session's cwd in at all — matched against
+            the real, untruncated file path, not file_root()'s guess."""
+            bp = datetime.datetime(2026, 1, 6, 9, 0)
+            new_dir = os.path.join(src, "-Users-x-scratch-alias-probe")
+            os.makedirs(new_dir, exist_ok=True)
+            rows = [
+                _user(_ts(bp, 0), "patch the vendored helper in the external repo",
+                      "/Users/x/scratch"),
+                _asst(_ts(bp, 1), "Patched.", [
+                    ("Edit", {"file_path":
+                        "/Users/x/unknownctr/never-indexed-proj/module.py"})]),
+            ]
+            open(os.path.join(new_dir, "sess-alias-probe.jsonl"), "w").write(
+                "\n".join(json.dumps(r) for r in rows) + "\n")
+            try:
+                known = q("SELECT 1 FROM sessions WHERE cwd LIKE '%never-indexed-proj%'")
+                assert not known, "test setup error: this project must never be a session cwd"
+                _reindex_with_aliases({"projects": {
+                    "/Users/x/unknownctr/never-indexed-proj": "external-repo"}})
+                erows = q(
+                    "SELECT project_id, root FROM episode_projects "
+                    "WHERE source='files' AND root LIKE '%never-indexed-proj%'")
+                assert erows, f"aliased file row missing entirely: {erows}"
+                assert all(r["project_id"] == "external-repo" for r in erows), (
+                    f"alias against the untruncated path didn't fire: {erows}")
+            finally:
+                _reindex_with_aliases(None)
+                shutil.rmtree(new_dir, ignore_errors=True)
+        s.check("alias resolution fires for a file chronicle never indexed a session in",
+                alias_fires_for_never_indexed_project)
+
+        def ignore_roots_beat_every_mechanism():
+            """A configured ignore_roots entry suppresses a file's per-file
+            attribution outright — before mechanism 1 (known cwd) or
+            mechanism 2 (alias) ever get a chance to fire, even when both
+            would otherwise have matched.
+
+            The alias key sits deeper than the owner session's own cwd (not
+            equal to it), same reasoning as known_root_beats_conflicting_alias:
+            an alias equal to the cwd would redirect the owner's own
+            session-level resolution too, creating the 'should-never-appear'
+            project by a route that has nothing to do with ignore_roots."""
+            bp = datetime.datetime(2026, 1, 7, 9, 0)
+            qdir = os.path.join(src, "-Users-x-quarantine-proj-q")
+            os.makedirs(qdir, exist_ok=True)
+            open(os.path.join(qdir, "sess-quarantine-owner.jsonl"), "w").write(
+                json.dumps(_user(_ts(bp, 0), "own this quarantined project",
+                                 "/Users/x/quarantine/proj-q")) + "\n")
+            other_dir = os.path.join(src, "-Users-x-quarantine-toucher")
+            os.makedirs(other_dir, exist_ok=True)
+            rows = [
+                _user(_ts(bp, 30), "touch the quarantined secret file too",
+                      "/Users/x/quarantine-toucher"),
+                _asst(_ts(bp, 31), "Touched.", [
+                    ("Edit", {"file_path": "/Users/x/quarantine/proj-q/vendor/secret.py"})]),
+            ]
+            open(os.path.join(other_dir, "sess-quarantine-toucher.jsonl"), "w").write(
+                "\n".join(json.dumps(r) for r in rows) + "\n")
+            try:
+                _reindex_with_aliases({
+                    "projects": {"/Users/x/quarantine/proj-q/vendor": "should-never-appear"},
+                    "ignore_roots": ["/Users/x/quarantine"]})
+                owner_pid = q(
+                    "SELECT project_id FROM sessions WHERE id='sess-quarantine-owner'"
+                )[0]["project_id"]
+                assert owner_pid != "should-never-appear", (
+                    "test setup error: the alias reached the owner's own cwd too")
+                rows = q(
+                    "SELECT * FROM episode_projects WHERE source='files' "
+                    "AND root LIKE '%quarantine%'")
+                assert not rows, f"an ignored root was still attributed: {rows}"
+                bad = q("SELECT 1 FROM projects WHERE id='should-never-appear'")
+                assert not bad, "an ignored file still created its aliased project"
+            finally:
+                _reindex_with_aliases(None)
+                shutil.rmtree(qdir, ignore_errors=True)
+                shutil.rmtree(other_dir, ignore_errors=True)
+        s.check("ignore_roots is respected regardless of which mechanism would have matched",
+                ignore_roots_beat_every_mechanism)
+
+        def fold_descendants_and_known_roots_agree():
+            """A subdirectory session still folds into its parent project
+            (fold_descendants), and a cross-repo file it touches still
+            attributes to its own real project (fold_known_roots) — the two
+            post-passes correcting different things without clobbering
+            each other."""
+            bp = datetime.datetime(2026, 1, 8, 9, 0)
+            a_dir = os.path.join(src, "-Users-x-foldtest-alpha")
+            os.makedirs(a_dir, exist_ok=True)
+            open(os.path.join(a_dir, "sess-fold-alpha.jsonl"), "w").write(
+                json.dumps(_user(_ts(bp, 0), "own the alpha project",
+                                 "/Users/x/foldtest/alpha")) + "\n")
+
+            sub_dir = os.path.join(src, "-Users-x-foldtest-alpha-subdir")
+            os.makedirs(sub_dir, exist_ok=True)
+            rows = [
+                _user(_ts(bp, 30), "work from a subdirectory of alpha, touch beta too",
+                      "/Users/x/foldtest/alpha/subdir"),
+                _asst(_ts(bp, 31), "Done.", [
+                    ("Edit", {"file_path": "/Users/x/foldtest/beta/shared.py"})]),
+            ]
+            open(os.path.join(sub_dir, "sess-fold-subdir.jsonl"), "w").write(
+                "\n".join(json.dumps(r) for r in rows) + "\n")
+
+            b_dir = os.path.join(src, "-Users-x-foldtest-beta")
+            os.makedirs(b_dir, exist_ok=True)
+            open(os.path.join(b_dir, "sess-fold-beta.jsonl"), "w").write(
+                json.dumps(_user(_ts(bp, 0), "own the beta project",
+                                 "/Users/x/foldtest/beta")) + "\n")
+            try:
+                _reindex_with_aliases(None)
+                alpha_pid = q("SELECT project_id FROM sessions WHERE id='sess-fold-alpha'")[0]["project_id"]
+                subdir_pid = q("SELECT project_id FROM sessions WHERE id='sess-fold-subdir'")[0]["project_id"]
+                assert subdir_pid == alpha_pid, (
+                    f"a subdirectory session didn't fold into its parent project: "
+                    f"{subdir_pid!r} != {alpha_pid!r}")
+                beta_pid = q("SELECT project_id FROM sessions WHERE id='sess-fold-beta'")[0]["project_id"]
+                frows = q(
+                    "SELECT project_id, root FROM episode_projects WHERE source='files' "
+                    "AND root LIKE '%foldtest/beta/shared.py'")
+                assert frows, f"cross-repo file from a folded subdir session was lost: {frows}"
+                assert all(r["project_id"] == beta_pid for r in frows), (
+                    f"a folded subdir session's cross-repo file resolved to the wrong "
+                    f"project: {frows} (want {beta_pid!r})")
+            finally:
+                _reindex_with_aliases(None)
+                shutil.rmtree(a_dir, ignore_errors=True)
+                shutil.rmtree(sub_dir, ignore_errors=True)
+                shutil.rmtree(b_dir, ignore_errors=True)
+        s.check("fold_descendants and fold_known_roots don't fight each other",
+                fold_descendants_and_known_roots_agree)
+
+        def custom_containers_reach_a_label_alias():
+            """A configured `containers` list (Task 2) combined with a
+            `labels` alias entry keyed by the resulting project id: reachable
+            end-to-end only because the containers config makes file_root()
+            guess the right project id in the first place — with the
+            hardcoded default containers the id would still be a container
+            name, and the label would never match anything."""
+            bp = datetime.datetime(2026, 1, 9, 9, 0)
+            w_dir = os.path.join(src, "-Users-x-otherplace")
+            os.makedirs(w_dir, exist_ok=True)
+            rows = [
+                _user(_ts(bp, 0), "touch a project under a made-up two-level container",
+                      "/Users/x/otherplace"),
+                _asst(_ts(bp, 1), "Touched.", [
+                    ("Edit", {"file_path":
+                        "/Users/x/weirdctr3/teamspace3/proj-w3/deep/file.py"})]),
+            ]
+            open(os.path.join(w_dir, "sess-containers-label.jsonl"), "w").write(
+                "\n".join(json.dumps(r) for r in rows) + "\n")
+            try:
+                known = q("SELECT 1 FROM sessions WHERE cwd LIKE '%proj-w3%'")
+                assert not known, "test setup error: proj-w3 must never be a known cwd"
+                _reindex_with_aliases({
+                    "containers": ["weirdctr3", "teamspace3"],
+                    "labels": {"proj-w3": "Team W Project"}})
+                frows = q(
+                    "SELECT project_id FROM episode_projects WHERE source='files' "
+                    "AND root LIKE '%proj-w3/deep/file.py'")
+                assert frows, f"the containers-guessed file row is missing: {frows}"
+                assert all(r["project_id"] == "proj-w3" for r in frows), (
+                    f"custom containers didn't produce the expected project id: {frows}")
+                named = q("SELECT name FROM projects WHERE id='proj-w3'")
+                assert named and named[0]["name"] == "Team W Project", (
+                    f"the labels alias for a containers-derived id never fired: {named}")
+            finally:
+                _reindex_with_aliases(None)
+                shutil.rmtree(w_dir, ignore_errors=True)
+        s.check("a configured containers list reaches a labels alias keyed by the resulting id",
+                custom_containers_reach_a_label_alias)
 
         def isolation():
             real = os.path.expanduser("~/.chronicle/chronicle.db")

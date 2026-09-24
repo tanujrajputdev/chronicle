@@ -30,15 +30,30 @@ except OSError:
 DEFAULT_IGNORE = ["/private/tmp", "/tmp", "/var/folders",
                   str(HOME / ".claude"), str(HOME / ".chronicle")]
 
+# a repo lives one level below these; they are containers, not projects
+DEFAULT_CONTAINERS = {"dev", "Documents", "Downloads", "Desktop", "Projects",
+                      "code", "work", "repos", "src", "sites", "apps",
+                      "github"}
 
-def load_ignore_roots():
+
+def _load_aliases_key(key, default):
     if ALIASES_PATH.exists():
         try:
             d = json.loads(ALIASES_PATH.read_text())
-            return d.get("ignore_roots", DEFAULT_IGNORE)
+            return d.get(key, default)
         except Exception:
             pass
-    return DEFAULT_IGNORE
+    return default
+
+
+def load_ignore_roots():
+    return _load_aliases_key("ignore_roots", DEFAULT_IGNORE)
+
+
+def load_containers():
+    """Directory names one level of which a repo sits below (e.g. 'github',
+    'repos'). file_root() walks past these to guess a project root."""
+    return set(_load_aliases_key("containers", DEFAULT_CONTAINERS))
 
 
 def load_aliases():
