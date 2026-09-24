@@ -36,7 +36,7 @@ milliseconds.
 ## Checking a change
 
 ```bash
-chronicle selftest                         # 78 checks against a synthetic corpus, ~16s
+chronicle selftest                         # 81 checks against a synthetic corpus, ~16s
 python3.11 -m py_compile chronicle/*.py    # the supported floor
 chronicle doctor                           # is this machine's install wired up
 ```

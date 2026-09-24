@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY, project_id TEXT, cwd TEXT, branch TEXT,
   title TEXT, started TEXT, ended TEXT,
   n_user INTEGER, n_asst INTEGER, compactions INTEGER,
-  out_tokens INTEGER, cache_read INTEGER, in_tokens INTEGER, cache_write INTEGER
+  out_tokens INTEGER, cache_read INTEGER, in_tokens INTEGER, cache_write INTEGER,
+  model TEXT
 );
 
 -- ids are handed out once per (session, sequence) and never reassigned, so a
@@ -56,7 +57,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   path TEXT UNIQUE, agent_type TEXT, workflow_id TEXT,
   ts TEXT, ended TEXT, prompt TEXT, result TEXT,
   n_tools INTEGER, out_tokens INTEGER, in_tokens INTEGER,
-  cache_read INTEGER, cache_write INTEGER
+  cache_read INTEGER, cache_write INTEGER, model TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_ar_ep ON agent_runs(episode_id);
 
@@ -88,10 +89,23 @@ def _private(path):
             pass
 
 
+# columns added after a table first shipped. CREATE TABLE IF NOT EXISTS leaves an
+# older index's tables as they were, so these are added in place; the values fill
+# in when a PARSER_VERSION bump makes the next index re-read every transcript.
+ADDED_COLUMNS = (("sessions", "model", "TEXT"), ("agent_runs", "model", "TEXT"))
+
+
+def _add_columns(con):
+    for table, col, typ in ADDED_COLUMNS:
+        if col not in {r[1] for r in con.execute(f"PRAGMA table_info({table})")}:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+
+
 def connect():
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    _add_columns(con)
     _private(DB_PATH)
     return con
 

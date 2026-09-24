@@ -184,13 +184,48 @@ def scan_agent_files():
 
 # ---------------------------------------------------------------- parsing
 
+# bump when a change alters what an already-indexed file yields; the next index
+# re-reads every transcript still on disk (see indexer.build)
+PARSER_VERSION = "2"
+
+# payload order of a "usage" event: (out, cache_read, in, cache_write)
+USAGE_KEYS = ("output_tokens", "cache_read_input_tokens", "input_tokens",
+              "cache_creation_input_tokens")
+
+
+def _note_usage(seen, msg, d):
+    """Record one assistant line under its message.id.
+
+    Claude Code writes one line per content block and repeats the message's usage
+    on each. output_tokens grows as the reply streams and the other fields never
+    change, so a message counts once, at its largest values. Summing every line
+    roughly doubles the total; keeping the first line drops about a third of output."""
+    u = msg.get("usage") or {}
+    tok = tuple(u.get(k, 0) or 0 for k in USAGE_KEYS)
+    mid = msg.get("id") or f"\0{len(seen)}"   # no id: nothing to dedup against
+    if mid in seen:
+        seen[mid][1] = tuple(map(max, seen[mid][1], tok))
+    else:
+        seen[mid] = [d, tok, msg.get("model")]
+
+
+def _usage_totals(seen):
+    return tuple(sum(v[1][i] for v in seen.values()) for i in range(len(USAGE_KEYS)))
+
+
+def _main_model(seen):
+    """The model behind the most replies; "<synthetic>" marks Claude Code's own."""
+    c = collections.Counter(v[2] for v in seen.values() if v[2] and v[2] != "<synthetic>")
+    return c.most_common(1)[0][0] if c else None
+
+
 def parse_session(path):
     """Single streaming pass -> compact events + session-level facts."""
     events = []          # (dt, kind, payload)
     title = None
     cwd = branch = None
-    n_user = n_asst = compactions = 0
-    out_tok = cache_rd = in_tok = cache_wr = 0
+    n_user = compactions = 0
+    replies = {}         # message.id -> [first dt, usage, model]
 
     with open(path, "r", errors="ignore") as fh:
         for line in fh:
@@ -223,21 +258,10 @@ def parse_session(path):
                 events.append((d, "user", text[:MAX_USER_TEXT]))
 
             elif typ == "assistant" and d:
-                n_asst += 1
-                u = msg.get("usage") or {}
-                ot = u.get("output_tokens", 0) or 0
-                cr = u.get("cache_read_input_tokens", 0) or 0
-                it = u.get("input_tokens", 0) or 0
-                cw = u.get("cache_creation_input_tokens", 0) or 0
-                out_tok += ot
-                cache_rd += cr
-                in_tok += it
-                cache_wr += cw
+                _note_usage(replies, msg, d)
                 text, _ = _text_of(msg.get("content"))
                 if text:
                     events.append((d, "asst", text[:MAX_ASST_TEXT]))
-                if ot or cr or it or cw:
-                    events.append((d, "usage", (ot, cr, it, cw)))
                 c = msg.get("content")
                 if isinstance(c, list):
                     for b in c:
@@ -253,12 +277,15 @@ def parse_session(path):
                                 for wp in shellwrite.targets(inp.get("command"), cwd):
                                     events.append((d, "shellwrite", wp))
 
+    # one usage event per reply, at the time it started
+    events.extend((d, "usage", tok) for d, tok, _ in replies.values() if any(tok))
     events.sort(key=lambda e: e[0])
+    out_tok, cache_rd, in_tok, cache_wr = _usage_totals(replies)
     return {
         "events": events, "title": title, "cwd": cwd, "branch": branch,
-        "n_user": n_user, "n_asst": n_asst, "compactions": compactions,
+        "n_user": n_user, "n_asst": len(replies), "compactions": compactions,
         "out_tokens": out_tok, "cache_read": cache_rd,
-        "in_tokens": in_tok, "cache_write": cache_wr,
+        "in_tokens": in_tok, "cache_write": cache_wr, "model": _main_model(replies),
     }
 
 
@@ -268,7 +295,7 @@ def parse_agent(path):
     last_text = ""
     first = last = None
     n_tools = 0
-    out_tok = in_tok = cache_rd = cache_wr = 0
+    replies = {}
     with open(path, "r", errors="ignore") as fh:
         for line in fh:
             try:
@@ -285,20 +312,18 @@ def parse_agent(path):
                 if t and not only:
                     prompt = t[:MAX_USER_TEXT]
             elif o.get("type") == "assistant":
-                u = msg.get("usage") or {}
-                out_tok += u.get("output_tokens", 0) or 0
-                in_tok += u.get("input_tokens", 0) or 0
-                cache_rd += u.get("cache_read_input_tokens", 0) or 0
-                cache_wr += u.get("cache_creation_input_tokens", 0) or 0
+                _note_usage(replies, msg, d)
                 t, _ = _text_of(msg.get("content"))
                 if t:
                     last_text = t
                 c = msg.get("content")
                 if isinstance(c, list):
                     n_tools += sum(1 for b in c if isinstance(b, dict) and b.get("type") == "tool_use")
+    out_tok, cache_rd, in_tok, cache_wr = _usage_totals(replies)
     return {"prompt": prompt or "", "result": last_text[:MAX_ASST_TEXT],
             "started": first, "ended": last, "n_tools": n_tools, "out_tokens": out_tok,
-            "in_tokens": in_tok, "cache_read": cache_rd, "cache_write": cache_wr}
+            "in_tokens": in_tok, "cache_read": cache_rd, "cache_write": cache_wr,
+            "model": _main_model(replies)}
 
 
 # ---------------------------------------------------------------- segmenting

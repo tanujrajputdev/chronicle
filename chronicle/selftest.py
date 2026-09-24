@@ -37,6 +37,11 @@ def _asst(t, text=None, tools=(), out=100, compact=False):
     return rec
 
 
+def _msg(rec, mid):
+    rec["message"]["id"] = mid
+    return rec
+
+
 def _user(t, text, cwd="/Users/x/proj-a"):
     return {"type": "user", "timestamp": t, "cwd": cwd, "gitBranch": "main",
             "message": {"role": "user", "content": text}}
@@ -69,7 +74,10 @@ def build_corpus(root):
     d2 = os.path.join(src, "-Users-x-proj-c"); os.makedirs(d2)
     rows = [
         _user(_ts(b, 0), "deploy with token ghp_" + "a" * 36 + " and confirm", "/Users/x/proj-c"),
-        _asst(_ts(b, 1), "Deployed.", [("Bash", {"command": "deploy"})]),
+        # one reply written as two lines, as Claude Code does per content block:
+        # same message id, usage repeated, output_tokens still growing on the first
+        _msg(_asst(_ts(b, 1), "Deployed.", out=40), "msg_b1"),
+        _msg(_asst(_ts(b, 1), tools=[("Bash", {"command": "deploy"})]), "msg_b1"),
         _asst(_ts(b, 2), "Summary of earlier work.", compact=True),
         _user(_ts(b, 5), "check the health endpoint responds correctly now", "/Users/x/proj-c"),
         _asst(_ts(b, 6), "It does.", [("Task", {"subagent_type": "Explore",
@@ -81,8 +89,13 @@ def build_corpus(root):
     arows = [
         {"type": "user", "timestamp": _ts(b, 6), "isSidechain": True,
          "message": {"role": "user", "content": "Investigate the deployment pipeline thoroughly"}},
+        {"type": "assistant", "timestamp": _ts(b, 7), "isSidechain": True,
+         "message": {"role": "assistant", "id": "msg_a1", "model": "claude-haiku-4-5",
+                     "usage": {"output_tokens": 200},
+                     "content": [{"type": "tool_use", "id": "t", "name": "Grep", "input": {}}]}},
         {"type": "assistant", "timestamp": _ts(b, 8), "isSidechain": True,
-         "message": {"role": "assistant", "usage": {"output_tokens": 500},
+         "message": {"role": "assistant", "id": "msg_a1", "model": "claude-haiku-4-5",
+                     "usage": {"output_tokens": 500},
                      "content": [{"type": "text", "text": "The pipeline uses blue-green deploys."}]}},
     ]
     open(os.path.join(sub, "agent-1.jsonl"), "w").write(
@@ -302,6 +315,63 @@ def run(verbose=False):
             assert "deployment pipeline" in rows[0]["prompt"], "agent prompt lost"
             assert "blue-green" in rows[0]["result"], "agent conclusion lost"
         s.check("subagent transcripts are captured", agent)
+
+        def tokens_once_per_reply():
+            # msg_b1 spans two lines (40 then 100 out); summing lines gives 340, first-wins 260
+            r = q("SELECT out_tokens, cache_read, n_asst, model FROM sessions WHERE id='sess-b'")[0]
+            got = (r["out_tokens"], r["cache_read"], r["n_asst"], r["model"])
+            assert got == (300, 30, 3, "claude-opus-5"), f"session B usage: {got}"
+            e = q("SELECT SUM(out_tokens) n FROM episodes WHERE session_id='sess-b'")[0]["n"]
+            assert e == 300, f"session B episodes sum to {e} output tokens, expected 300"
+            a = q("SELECT out_tokens, n_tools, model FROM agent_runs")[0]
+            got = (a["out_tokens"], a["n_tools"], a["model"])
+            assert got == (500, 1, "claude-haiku-4-5"), f"agent usage: {got}"
+        s.check("tokens count once per reply, at the reply's final usage", tokens_once_per_reply)
+
+        def parser_change_rereads():
+            # an index written by an older parser, holding a session whose transcript
+            # Claude Code has since deleted
+            con = sqlite3.connect(db)
+            con.execute("UPDATE meta SET v='1' WHERE k='parser'")
+            con.execute("UPDATE sessions SET out_tokens=999 WHERE id='sess-b'")
+            con.execute("INSERT INTO sessions (id, out_tokens) VALUES ('sess-gone', 7)")
+            con.commit(); con.close()
+            try:
+                run_cli(env, "index")
+                got = {r["id"]: r["out_tokens"] for r in
+                       q("SELECT id, out_tokens FROM sessions WHERE id IN ('sess-b','sess-gone')")}
+                assert got == {"sess-b": 300, "sess-gone": 7}, f"after a parser change: {got}"
+                v = q("SELECT v FROM meta WHERE k='parser'")[0]["v"]
+                assert v != "1", "parser version not recorded"
+            finally:
+                con = sqlite3.connect(db)
+                con.execute("DELETE FROM sessions WHERE id='sess-gone'")
+                con.commit(); con.close()
+        s.check("a parser change re-reads transcripts and keeps deleted ones", parser_change_rereads)
+
+        def old_index_gains_columns():
+            # an index built before sessions/agent_runs had a model column
+            old = os.path.join(sandbox, "old-root"); os.makedirs(old)
+            con = sqlite3.connect(os.path.join(old, "chronicle.db"))
+            con.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY, project_id TEXT, cwd TEXT,"
+                        " branch TEXT, title TEXT, started TEXT, ended TEXT, n_user INTEGER,"
+                        " n_asst INTEGER, compactions INTEGER, out_tokens INTEGER,"
+                        " cache_read INTEGER, in_tokens INTEGER, cache_write INTEGER)")
+            con.execute("CREATE TABLE agent_runs (id INTEGER PRIMARY KEY, episode_id INTEGER,"
+                        " session_id TEXT, project_id TEXT, path TEXT UNIQUE, agent_type TEXT,"
+                        " workflow_id TEXT, ts TEXT, ended TEXT, prompt TEXT, result TEXT,"
+                        " n_tools INTEGER, out_tokens INTEGER, in_tokens INTEGER,"
+                        " cache_read INTEGER, cache_write INTEGER)")
+            con.commit(); con.close()
+            run_cli({**env, "CHRONICLE_ROOT": old}, "index")
+            con = sqlite3.connect(os.path.join(old, "chronicle.db"))
+            try:
+                got = (con.execute("SELECT model FROM sessions WHERE id='sess-b'").fetchone(),
+                       con.execute("SELECT model FROM agent_runs").fetchone())
+            finally:
+                con.close()
+            assert got == (("claude-opus-5",), ("claude-haiku-4-5",)), f"old index: {got}"
+        s.check("an index from before the model column still indexes", old_index_gains_columns)
 
         def compaction():
             n = q("SELECT SUM(compactions) n FROM episodes")[0]["n"] or 0
