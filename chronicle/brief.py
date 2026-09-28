@@ -17,23 +17,29 @@ def project_for_cwd(con, cwd):
 
     An exact match wins, then the deepest ancestor that contains it. Only if
     nothing contains it do we accept a project living in a subdirectory —
-    otherwise `~/acme` resolves to whatever project owns `~/acme/reports`."""
+    otherwise `~/acme` resolves to whatever project owns `~/acme/reports`.
+
+    Two projects can list the same path when one absorbed the other's folder.
+    The one whose root it is beats the one that also owns an ancestor of it,
+    then the lower id, so the answer never depends on row order."""
     if not cwd:
         return None
     cwd = cwd.rstrip("/")
     exact, ancestor, descendant = None, (-1, None), (-1, None)
-    for r in con.execute("SELECT id, paths FROM projects"):
-        for p in json.loads(r["paths"] or "[]"):
-            p = p.rstrip("/")
+    for r in con.execute("SELECT id, paths FROM projects ORDER BY id"):
+        paths = [p.rstrip("/") for p in json.loads(r["paths"] or "[]")]
+        for p in paths:
             if cwd == p:
-                exact = r["id"]
+                rank = any(cwd.startswith(q + "/") for q in paths)
+                if exact is None or rank < exact[0]:
+                    exact = (rank, r["id"])
             elif cwd.startswith(p + "/"):
                 if len(p) > ancestor[0]:
                     ancestor = (len(p), r["id"])
             elif p.startswith(cwd + "/"):
                 if -len(p) > descendant[0] or descendant[1] is None:
                     descendant = (-len(p), r["id"])
-    return exact or ancestor[1] or descendant[1]
+    return (exact and exact[1]) or ancestor[1] or descendant[1]
 
 
 def _ago(iso):

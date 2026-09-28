@@ -386,6 +386,24 @@ def run(verbose=False):
             assert not out.strip(), f"spoke about an unknown directory: {out[:120]}"
         s.check("brief stays silent elsewhere", brief_silent)
 
+        def brief_prefers_the_folders_own_project():
+            """Two projects list the same folder when one absorbed the other.
+            The brief must go to the one whose root it is, whichever sorts first."""
+            from . import brief
+            here = "/Users/x/box/repo"
+            for bucket, repo in (("aaa-bucket", "zzz-repo"), ("zzz-bucket", "aaa-repo")):
+                c = sqlite3.connect(":memory:"); c.row_factory = sqlite3.Row
+                c.execute("CREATE TABLE projects (id TEXT, name TEXT, paths TEXT)")
+                rows = [(bucket, bucket, json.dumps(["/Users/x/box", here])),
+                        (repo, repo, json.dumps([here, here + "/sub"]))]
+                for order in (rows, rows[::-1]):
+                    c.execute("DELETE FROM projects")
+                    c.executemany("INSERT INTO projects VALUES (?,?,?)", order)
+                    got = brief.project_for_cwd(c, here)
+                    assert got == repo, f"brief went to {got!r}, not the folder's own {repo!r}"
+        s.check("brief picks the folder's own project on a tie",
+                brief_prefers_the_folders_own_project)
+
         def recall_silent():
             out = run_hook(env, "userpromptsubmit",
                            {"session_id": "r", "cwd": "/Users/x/proj-a",
