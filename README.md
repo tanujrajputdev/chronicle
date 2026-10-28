@@ -170,7 +170,15 @@ Harness machinery (`<task-notification>`, `/compact`, command wrappers) never st
 
 Work launched in one folder routinely edits repos elsewhere. One project on the reference machine turned out to span five separate repos; another was building an entire application in a different directory tree.
 
-Chronicle attributes a project from **the files an episode actually edits**, not the working directory it was launched in. That includes files written through the shell: a `cat > file <<EOF`, a redirect or a `sed -i` reports no `file_path`, so without help that work lands in no project at all. `chronicle/shellwrite.py` recovers those paths, and it is deliberately the most conservative code in the project — heredoc bodies are stripped before anything is matched, a candidate has to look like a path, and the file has to exist when the index is built. `chronicle map --cross` shows any path still landing on the wrong project, and `aliases.json` fixes it permanently.
+Chronicle attributes a project from **the files an episode actually edits**, not the working directory it was launched in. That includes files written through the shell: a `cat > file <<EOF`, a redirect or a `sed -i` reports no `file_path`, so without help that work lands in no project at all. `chronicle/shellwrite.py` recovers those paths, and it is deliberately the most conservative code in the project — heredoc bodies are stripped before anything is matched, a candidate has to look like a path, and the file has to exist when the index is built.
+
+A touched file is resolved in a fixed order, first match wins:
+
+1. **A known project root.** If the file falls under any directory Chronicle has ever seen as a session's own working directory, it is attributed there directly — no `aliases.json` entry needed. This covers most cross-project edits without any configuration.
+2. **`aliases.json`**, matched against the file's real, untruncated path — the escape hatch for a genuinely external repo Chronicle has never indexed a session in.
+3. **The `file_root()` heuristic**, a last-resort guess from the path shape alone, used only when neither of the above fires.
+
+`chronicle map --cross` shows any path still landing on the wrong project, and `aliases.json` fixes it permanently.
 
 ### 3. References must be permanent
 
@@ -236,9 +244,9 @@ One SQLite file at `~/.chronicle/chronicle.db` — 11 MB for 500 MB of transcrip
 
 | Command | What it does |
 |---|---|
-| `index [--rebuild]` | Ingest new or changed sessions. Incremental and idempotent. |
+| `index [--rebuild \| --reattribute]` | Ingest new or changed sessions. Incremental and idempotent. `--reattribute` re-runs project attribution on the existing index without re-reading transcripts; ids don't change. |
 | `doctor` | Check *this* install: environment, index, hooks, MCP, redaction. 24 checks. |
-| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 78 checks. |
+| `selftest` | Run the whole product against a synthetic corpus in a sandbox. 91 checks. |
 | `stats` | Corpus overview. |
 | `tokens [--by project\|day\|month]` | Every token spent, split into input, cache write, cache read and output. |
 | `projects` | Every project, most recently worked first. |
@@ -316,11 +324,14 @@ Copy `aliases.example.json` to `aliases.json` to tell Chronicle that several dir
   },
   "labels": { "acme": "Acme Corp" },
   "ignore_roots": ["/private/tmp", "/tmp", "/var/folders"],
+  "containers": ["dev", "Documents", "Projects", "code", "work", "repos"],
   "recall_exclude": []
 }
 ```
 
-Then `./chronicle-cli index --rebuild`. Run `chronicle map --cross` to find directories still landing on the wrong project.
+`containers` is optional and only matters as a last resort, when a file can't be resolved from a known session root or from `projects` above (see [A project is not a directory](#2-a-project-is-not-a-directory)). It lists folder names that hold repos rather than being one — a repo sits one level below them. Setting it replaces the built-in list entirely, so include every name you rely on.
+
+Then `./chronicle-cli index --reattribute` (seconds, reads no transcripts). Run `chronicle map --cross` to find directories still landing on the wrong project.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -398,7 +409,7 @@ Issues and pull requests welcome. Two rules that are not negotiable:
 Before opening a PR:
 
 ```bash
-chronicle selftest                        # 78 checks, ~16s, sandboxed
+chronicle selftest                        # 91 checks, ~16s, sandboxed
 python3.11 -m py_compile chronicle/*.py   # the supported floor
 ```
 

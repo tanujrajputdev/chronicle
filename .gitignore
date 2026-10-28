@@ -22,3 +22,7 @@ __pycache__/
 .DS_Store
 Chronicle-Playbook.pdf
 .build/
+
+# Local tooling artifacts (ripwire, serena)
+**/.ripwire_quality_acks
+**/.serena/

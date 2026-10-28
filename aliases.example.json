@@ -13,5 +13,10 @@
     "/tmp",
     "/var/folders"
   ],
+  "_containers_readme": "Optional. Overrides the built-in guess of which folder names are containers (a repo sits one level below one of these, not a project itself) rather than a project's own directory. Only used as a last-resort fallback when a file's project can't be resolved from a known session cwd or from 'projects' above. Replaces the built-in default entirely when set.",
+  "containers": [
+    "dev", "Documents", "Downloads", "Desktop", "Projects",
+    "code", "work", "repos", "src", "sites", "apps", "github"
+  ],
   "recall_exclude": []
 }

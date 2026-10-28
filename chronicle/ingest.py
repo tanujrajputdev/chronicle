@@ -1,29 +1,33 @@
 import os, re, json, glob, html, datetime, collections, pathlib
 from .config import (SOURCE, GAP_SECONDS, MAX_USER_TEXT, MAX_ASST_TEXT,
-                     MAX_BODY, load_aliases)
+                     MAX_BODY, load_aliases, load_containers)
 from .redact import scrub
 from . import shellwrite
 
 MUTATORS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 # work continuing after the last prompt still belongs to the episode, but only for a while
 TAIL_GRACE = 2 * 3600
-# a repo lives one level below these; they are containers, not projects
-CONTAINERS = {"dev", "Documents", "Downloads", "Desktop", "Projects",
-              "code", "work", "repos", "src", "sites", "apps"}
 
 
-def file_root(path):
-    """The repo/project root a touched file belongs to."""
+def file_root(path, containers=None):
+    """The repo/project root a touched file belongs to.
+
+    `containers` defaults to the configured set (aliases.json's `containers`
+    key, falling back to config.DEFAULT_CONTAINERS) — pass it explicitly only
+    to avoid re-reading aliases.json across many calls."""
     if not path or not path.startswith("/"):
         return None
+    if containers is None:
+        containers = load_containers()
     s = path.split("/")
     if len(s) < 4 or s[1] != "Users":
         return "/".join(s[:3]) or None
     i = 3
-    while i < len(s) - 1 and s[i] in CONTAINERS:
+    while i < len(s) - 1 and s[i] in containers:
         i += 1
     return "/".join(s[: i + 1])
 AGENT_TOOLS = {"Task", "Agent"}
+SLASH_RX = re.compile(r"<command-name>/([^<]+)</command-name>")
 CMD_RX = re.compile(r"<command-(?:name|message|args)>.*?</command-(?:name|message|args)>", re.S)
 TAG_RX = re.compile(r"<[^>]{1,80}>")
 WS_RX = re.compile(r"[ \t]+")
@@ -191,6 +195,7 @@ def parse_session(path):
     cwd = branch = None
     n_user = n_asst = compactions = 0
     out_tok = cache_rd = in_tok = cache_wr = 0
+    cmds = collections.Counter()
 
     with open(path, "r", errors="ignore") as fh:
         for line in fh:
@@ -221,6 +226,13 @@ def parse_session(path):
                     continue
                 n_user += 1
                 events.append((d, "user", text[:MAX_USER_TEXT]))
+                m = SLASH_RX.search(text)
+                if m:
+                    # a slash command is machinery, not a "prompt" — it never anchors an
+                    # episode's own bounds, so per-event tool capture would silently drop
+                    # it whenever it lands before/after every real prompt's window. Tally
+                    # it at the session level instead; the caller attributes it to ep #1.
+                    cmds[m.group(1)] += 1
 
             elif typ == "assistant" and d:
                 n_asst += 1
@@ -245,7 +257,8 @@ def parse_session(path):
                             nm = b.get("name") or "?"
                             inp = b.get("input") if isinstance(b.get("input"), dict) else {}
                             fp = inp.get("file_path") or inp.get("notebook_path")
-                            sub = inp.get("subagent_type") if nm in AGENT_TOOLS else None
+                            sub = (inp.get("subagent_type") if nm in AGENT_TOOLS else
+                                   inp.get("skill") if nm == "Skill" else None)
                             events.append((d, "tool", (nm, fp, sub)))
                             if nm == "Bash":
                                 # a heredoc or redirect writes a file just as
@@ -259,6 +272,7 @@ def parse_session(path):
         "n_user": n_user, "n_asst": n_asst, "compactions": compactions,
         "out_tokens": out_tok, "cache_read": cache_rd,
         "in_tokens": in_tok, "cache_write": cache_wr,
+        "commands": dict(cmds),
     }
 
 
@@ -269,6 +283,7 @@ def parse_agent(path):
     first = last = None
     n_tools = 0
     out_tok = in_tok = cache_rd = cache_wr = 0
+    tools = collections.Counter()
     with open(path, "r", errors="ignore") as fh:
         for line in fh:
             try:
@@ -295,10 +310,20 @@ def parse_agent(path):
                     last_text = t
                 c = msg.get("content")
                 if isinstance(c, list):
-                    n_tools += sum(1 for b in c if isinstance(b, dict) and b.get("type") == "tool_use")
+                    for b in c:
+                        if not (isinstance(b, dict) and b.get("type") == "tool_use"):
+                            continue
+                        n_tools += 1
+                        nm = b.get("name") or "?"
+                        inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                        sub = (inp.get("subagent_type") if nm in AGENT_TOOLS else
+                               inp.get("skill") if nm == "Skill" else None)
+                        key = f"{'agent' if nm in AGENT_TOOLS else 'skill'}:{sub}" if sub else nm
+                        tools[key] += 1
     return {"prompt": prompt or "", "result": last_text[:MAX_ASST_TEXT],
             "started": first, "ended": last, "n_tools": n_tools, "out_tokens": out_tok,
-            "in_tokens": in_tok, "cache_read": cache_rd, "cache_write": cache_wr}
+            "in_tokens": in_tok, "cache_read": cache_rd, "cache_write": cache_wr,
+            "tools": dict(tools)}
 
 
 # ---------------------------------------------------------------- segmenting
@@ -341,13 +366,13 @@ def segment(events, gap=GAP_SECONDS):
                 ep["files"].add(payload)
             elif kind == "tool":
                 nm, fp, sub = payload
-                ep["tools"][nm] += 1
                 if nm in MUTATORS and fp:
                     ep["files"].add(fp)
                 if nm in AGENT_TOOLS:
                     ep["agents"] += 1
-                    if sub:
-                        ep["tools"][f"agent:{sub}"] += 1
+                key = (f"agent:{sub}" if nm in AGENT_TOOLS and sub else
+                       f"skill:{sub}" if nm == "Skill" and sub else nm)
+                ep["tools"][key] += 1
             if d > ep["ended"] and (d - b).total_seconds() <= TAIL_GRACE:
                 ep["ended"] = d
         eps.append(ep)

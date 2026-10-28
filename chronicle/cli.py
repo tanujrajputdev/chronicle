@@ -38,6 +38,11 @@ def cmd_index(con, a):
         pct = int(i / n * 30)
         sys.stderr.write(f"\r  [{'█'*pct}{'·'*(30-pct)}] {i}/{n} {name[:28]:28}")
         sys.stderr.flush()
+    if a.reattribute:
+        s = indexer.reattribute(con)
+        print(f"  {G}✓{R} {s['sessions']} sessions re-attributed, {B}{s['moved']} moved{R}; "
+              f"{s['projects_before']} → {s['projects']} projects")
+        return
     t0 = datetime.datetime.now()
     if sys.stdout.isatty():
         print(f"{B}Indexing{R} {SOURCE}")
@@ -579,7 +584,11 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd")
 
     x = sub.add_parser("index", help="ingest new/changed sessions")
-    x.add_argument("--rebuild", action="store_true"); x.set_defaults(fn=cmd_index)
+    g = x.add_mutually_exclusive_group()
+    g.add_argument("--rebuild", action="store_true")
+    g.add_argument("--reattribute", action="store_true",
+                   help="re-run project attribution on the index without re-reading transcripts")
+    x.set_defaults(fn=cmd_index)
 
     x = sub.add_parser("stats", help="corpus overview"); x.set_defaults(fn=cmd_stats)
     x = sub.add_parser("tokens", help="token usage by project, day or month")
